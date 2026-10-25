@@ -22,8 +22,6 @@
 
 ### gocyclo
 
-- `hook_errors_test.go`
-  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 - `fuzz_test.go`
   - Line 16: cyclomatic complexity 16 for function FuzzPathValidation
 - `regression_test.go`
@@ -35,6 +33,8 @@
   - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
 - `memfs_test.go`
   - Line 37: cyclomatic complexity 16 for function TestMemFS
+- `hook_errors_test.go`
+  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 
 ### misspell
 
