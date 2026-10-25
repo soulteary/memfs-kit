@@ -4,9 +4,11 @@
 // Package memfs provides an in-memory filesystem built around io/fs.
 //
 // Create a filesystem with New, populate it with FS.MkdirAll and FS.WriteFile,
-// and consume it with standard helpers such as fs.ReadFile, fs.ReadDir,
+// and consume it with standard helpers such as fs.ReadFile, fs.Stat, fs.ReadDir,
 // fs.WalkDir, fs.Sub, template.ParseFS and http.FS. Open returns read-only
 // snapshots; regular files support seeking and positional reads.
+// *FS implements fs.FS, fs.StatFS, fs.ReadDirFS and fs.SubFS. Directory entries
+// capture stored metadata at open; regular-file hooks resolve lazily on Info.
 //
 // All names must satisfy fs.ValidPath. The root is ".", paths use forward
 // slashes, and absolute paths, empty names and dot/dot-dot components are

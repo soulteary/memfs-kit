@@ -244,8 +244,9 @@ func (rootFS *FS) Stat(name string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// ReadDir returns a new, sorted snapshot of the directory's entries. As with
-// Open, regular-file metadata is resolved lazily by each entry's Info method.
+// ReadDir returns a new, sorted snapshot of the directory's entries. Stored
+// metadata is captured immediately; a regular-file hook is resolved lazily by
+// each entry's Info method and its result is cached for that entry.
 func (rootFS *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 	f, err := rootFS.Open(name)
 	if err != nil {

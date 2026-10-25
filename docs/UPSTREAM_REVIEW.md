@@ -4,6 +4,10 @@ Reviewed on 2026-10-25. This document records why `memfs-kit` incorporates
 selected upstream capabilities together with additional correctness fixes,
 instead of copying the latest upstream implementation unchanged.
 
+This is a historical migration review. Later implementation and performance
+changes are documented in the [README](../README.md) and
+[performance notes](PERFORMANCE.md).
+
 ## Sources reviewed
 
 | Source | Reviewed revision |

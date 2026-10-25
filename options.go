@@ -35,8 +35,8 @@ func (o openHookOption) setOption(options *fsOption) {
 // For an existing file, content is a private copy and origErr is nil. For a
 // missing path, content is nil and errors.Is(origErr, fs.ErrNotExist) is true.
 // Returning content, origErr preserves the default behavior. Returning data
-// and a nil error supplies a read-only snapshot for this Open without storing
-// it in the filesystem. Synthesized files have mode 0444, a zero modification
+// and a nil error supplies content for that operation without storing it in
+// the filesystem. Synthesized files have mode 0444, a zero modification
 // time, and do not appear in directory listings.
 // Transformed existing files also have a zero modification time when their
 // contents differ from the stored bytes, preventing stale HTTP cache validation.
@@ -44,6 +44,9 @@ func (o openHookOption) setOption(options *fsOption) {
 // Directory enumeration and DirEntry.Name/Type/IsDir do not invoke the hook.
 // The first DirEntry.Info call applies it to the directory's captured file
 // snapshot and caches the metadata or error, including across concurrent calls.
+// If the callback panics, later Info calls re-panic with the same value without
+// invoking it again. Directory entries without a regular-file hook return their
+// already-captured immutable metadata without executing a callback.
 // Consumers that compare metadata with separately opened content, such as tar
 // writers, require a deterministic hook or stable application state.
 //
