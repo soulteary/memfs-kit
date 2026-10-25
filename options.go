@@ -12,12 +12,14 @@ type Option interface {
 	setOption(*fsOption)
 }
 
+type openHook func(string, []byte, error) ([]byte, error)
+
 type fsOption struct {
-	openHook func(string, []byte, error) ([]byte, error)
+	openHook openHook
 }
 
 type openHookOption struct {
-	hook func(string, []byte, error) ([]byte, error)
+	hook openHook
 }
 
 func (o openHookOption) setOption(options *fsOption) {
@@ -25,8 +27,9 @@ func (o openHookOption) setOption(options *fsOption) {
 }
 
 // WithOpenHook sets a callback for opening existing regular files or paths
-// that return fs.ErrNotExist. Directories, invalid paths and paths through a
-// regular file bypass the hook. A nil callback disables the hook.
+// that return fs.ErrNotExist, and for resolving regular-file DirEntry.Info.
+// Directories, invalid paths and paths through a regular file bypass the hook.
+// A nil callback disables the hook.
 //
 // The path is relative to the original New root, even when using a Sub view.
 // For an existing file, content is a private copy and origErr is nil. For a
@@ -38,10 +41,18 @@ func (o openHookOption) setOption(options *fsOption) {
 // Transformed existing files also have a zero modification time when their
 // contents differ from the stored bytes, preventing stale HTTP cache validation.
 //
-// The callback runs without filesystem locks and may write to the FS. Its
-// returned bytes are copied before Open returns. Concurrent Open calls may
-// invoke it simultaneously; callers must synchronize their own callback state.
+// Directory enumeration and DirEntry.Name/Type/IsDir do not invoke the hook.
+// The first DirEntry.Info call applies it to the directory's captured file
+// snapshot and caches the metadata or error, including across concurrent calls.
+// Consumers that compare metadata with separately opened content, such as tar
+// writers, require a deterministic hook or stable application state.
+//
+// The callback runs without tree or handle locks and may write to the FS. Its
+// returned bytes are copied before use. Concurrent opens or distinct entries
+// may invoke it simultaneously; callers must synchronize their own hook state.
 // A callback must not recursively Open the same path without a stopping rule.
+// It must not call Info recursively on the same DirEntry, whose result is still
+// being initialized.
 func WithOpenHook(f func(string, []byte, error) ([]byte, error)) Option {
 	return openHookOption{hook: f}
 }

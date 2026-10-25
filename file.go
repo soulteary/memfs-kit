@@ -74,7 +74,8 @@ func (f *File) Seek(offset int64, whence int) (int64, error) {
 	return f.reader.Seek(offset, whence)
 }
 
-// Close closes the handle. Further operations return fs.ErrClosed.
+// Close closes the handle and releases its reference to the content snapshot.
+// Further operations return fs.ErrClosed.
 func (f *File) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -82,6 +83,7 @@ func (f *File) Close() error {
 		return pathError("close", f.path, fs.ErrClosed)
 	}
 	f.closed = true
+	f.reader = nil
 	return nil
 }
 
@@ -119,6 +121,7 @@ func (d *dirFile) Close() error {
 		return pathError("close", d.path, fs.ErrClosed)
 	}
 	d.closed = true
+	d.entries = nil
 	return nil
 }
 
@@ -159,10 +162,32 @@ func (i fileInfo) IsDir() bool        { return i.mode.IsDir() }
 func (i fileInfo) Sys() any           { return nil }
 
 type dirEntry struct {
-	info fileInfo
+	info   fileInfo
+	infoFn func() (fs.FileInfo, error)
 }
 
-func (d dirEntry) Name() string               { return d.info.Name() }
-func (d dirEntry) IsDir() bool                { return d.info.IsDir() }
-func (d dirEntry) Type() fs.FileMode          { return d.info.Mode().Type() }
-func (d dirEntry) Info() (fs.FileInfo, error) { return d.info, nil }
+// newDirEntry captures only the immutable file snapshot, not its parent tree.
+// Metadata is lazy: listing names does not execute application callbacks.
+func newDirEntry(name, hookName string, info fileInfo, data []byte, hook openHook) dirEntry {
+	entry := dirEntry{info: info}
+	if hook != nil && !info.IsDir() {
+		entry.infoFn = sync.OnceValues(func() (fs.FileInfo, error) {
+			resolved, _, err := applyOpenHook(hook, name, hookName, info, data, nil)
+			if err != nil {
+				return nil, err
+			}
+			return resolved, nil
+		})
+	}
+	return entry
+}
+
+func (d dirEntry) Name() string      { return d.info.Name() }
+func (d dirEntry) IsDir() bool       { return d.info.IsDir() }
+func (d dirEntry) Type() fs.FileMode { return d.info.Mode().Type() }
+func (d dirEntry) Info() (fs.FileInfo, error) {
+	if d.infoFn != nil {
+		return d.infoFn()
+	}
+	return d.info, nil
+}

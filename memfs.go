@@ -28,7 +28,7 @@ import (
 type FS struct {
 	tree     *tree
 	root     *node
-	openHook func(string, []byte, error) ([]byte, error)
+	openHook openHook
 	prefix   string
 }
 
@@ -161,7 +161,10 @@ func (rootFS *FS) Open(name string) (fs.File, error) {
 		}
 		entries := make([]fs.DirEntry, 0, len(entry.children))
 		for _, child := range entry.children {
-			entries = append(entries, dirEntry{info: child.info})
+			childName := path.Join(name, child.info.name)
+			entries = append(entries, newDirEntry(
+				childName, rootFS.hookPath(childName), child.info, child.data, rootFS.openHook,
+			))
 		}
 		rootFS.tree.mu.RUnlock()
 		slices.SortFunc(entries, func(a, b fs.DirEntry) int {
@@ -183,26 +186,37 @@ func (rootFS *FS) Open(name string) (fs.File, error) {
 		}
 	}
 	if rootFS.openHook != nil {
-		// A hook may write to the FS. It runs outside all internal locks and
-		// receives a private copy so it cannot mutate the stored contents.
-		content, hookErr := rootFS.openHook(rootFS.hookPath(name), bytes.Clone(data), err)
-		if hookErr != nil {
-			return nil, pathError("open", name, hookErr)
-		}
-		updated := bytes.Clone(content)
+		info, data, err = applyOpenHook(rootFS.openHook, name, rootFS.hookPath(name), info, data, err)
 		if err != nil {
-			// A synthesized file exists only for this Open and is not listed
-			// in directories. Its unknown modification time remains zero.
-			info = fileInfo{name: path.Base(name), mode: 0o444}
-		} else if !bytes.Equal(updated, data) {
-			// The stored modification time cannot validate transformed content.
-			// Leave it unknown so net/http cannot return a stale 304 response.
-			info.modTime = time.Time{}
+			return nil, err
 		}
-		data = updated
-		info.size = int64(len(data))
 	}
 	return &File{path: name, info: info, reader: bytes.NewReader(data)}, nil
+}
+
+// applyOpenHook is shared by Open and lazy directory-entry metadata so both
+// describe the same transformed file. Callers must not hold tree/handle locks.
+// origErr is nil or the *fs.PathError constructed by Open for a missing path.
+func applyOpenHook(hook openHook, name, hookName string, info fileInfo, data []byte, origErr error) (fileInfo, []byte, error) {
+	content, err := hook(hookName, bytes.Clone(data), origErr)
+	if err != nil {
+		if origErr != nil && err == origErr {
+			// A pass-through hook must preserve the original error, including
+			// compatibility with os.IsNotExist's single-level unwrapping.
+			return fileInfo{}, nil, origErr
+		}
+		return fileInfo{}, nil, pathError("open", name, err)
+	}
+	updated := bytes.Clone(content)
+	if origErr != nil {
+		// A virtual file exists only for this Open and has no stored timestamp.
+		info = fileInfo{name: path.Base(name), mode: 0o444}
+	} else if !bytes.Equal(updated, data) {
+		// Stored timestamps cannot validate transformed HTTP content.
+		info.modTime = time.Time{}
+	}
+	info.size = int64(len(updated))
+	return info, updated, nil
 }
 
 // Sub returns a view of an existing directory. The view shares subsequent
