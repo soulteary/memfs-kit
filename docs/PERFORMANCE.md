@@ -27,9 +27,10 @@ or changes to existing method signatures. `Stat` and `ReadDir` add the standard
 copies on the ordinary file-opening path. `Stat` performs its own single lookup;
 regression tests compare its behavior with `Open` followed by file `Stat`.
 
-The global tree lock and `WriteFile`'s content copy remain unchanged. Per-handle
-locking, shared `ReadAt` behavior, and directory-sort caching are outside this
-optimization scope.
+The global tree lock and `WriteFile`'s content copy remain unchanged. The
+follow-up below reduces small-read and directory-metadata overhead while
+retaining per-handle locking. `ReadAt` synchronization and directory-sort caching
+are unchanged.
 
 ## Preserved behavior
 
@@ -124,3 +125,95 @@ new methods, passed a 15-second two-worker fuzz run. Regression coverage compare
 optional methods against standard-library Open-only fallbacks and exercises
 subtree paths, errors, retained hook slices, independent lazy metadata caches,
 concurrent Info calls, reentrant hooks, and snapshot ownership.
+
+## Follow-up: small reads and entry metadata
+
+Two paths received further improvements after v1.1.0:
+
+- `File.Read` explicitly unlocks on its two return paths. This lets the
+  compiler expand the mutex's normal unlock path without the deferred wrapper
+  call on every small read. The same mutex still covers the closed check,
+  content access and cursor update. `Read` itself is not inlined; `Seek`,
+  `ReadAt` and `Close` retain their synchronization and behavior.
+- Entries without a regular-file hook own a compact, immutable metadata
+  snapshot. `Info` returns that existing snapshot instead of allocating another
+  interface copy on every call. This applies to directories even when a hook
+  is configured. Entries with hooks retain their separate, lazy `OnceValues`
+  result, including cached errors and panic propagation.
+
+Neither change adds an exported method or dependency. Entry metadata retains
+no tree node or file data, and holding a returned `FileInfo` keeps its snapshot
+alive after the entry slice is discarded. Listing names still does not call
+hooks. Per-listing caches, reentrant callbacks, errors and content ownership
+remain unchanged.
+
+The new `BenchmarkSmallChunkRead`, `BenchmarkReadDirInfo`,
+`BenchmarkHookReadDirAllInfo` and `BenchmarkDirEntryInfoCached` cases are in
+`benchmark_test.go`. For a before/after comparison, copy that benchmark file to
+a clean v1.1.0 checkout as well as the updated checkout. Use the same Go version
+and run one benchmark process at a time:
+
+```sh
+go test -run='^$' \
+  -bench='^Benchmark(SmallChunkRead|Directory|ReadDirInfo|HookReadDirAllInfo|DirEntryInfoCached)$' \
+  -benchmem -benchtime=200ms -count=6 -cpu=1 .
+```
+
+Small-read operations open a fresh 4 KiB file, read it through EOF in the named
+chunk size, and close it; they are not single-`Read` latency measurements.
+Directory operations create a fresh sorted listing each time, then call every
+entry's `Info` and consume its size. Hook cases use a five-byte stored value
+per entry and transform the private input in place. Cached-`Info` cases resolve
+the entry once before timing. Fixture creation and result validation are
+outside timing.
+
+### Follow-up measurements
+
+Measured on 2026-10-25 with Go 1.27.3, darwin/arm64, Apple M5 and
+`GOMAXPROCS=1`. A separate comparison harness imported the published v1.1.0
+source (`d69c7500e0034579d72819a2a05cda1f97de960e`) and this implementation
+under separate local module aliases in one binary. Each of 17 scenarios ran
+six adjacent pairs, alternating AB/BA, with `-benchtime=200ms -count=1 -cpu=1`.
+The harness's explicit trials require `-count=1` to preserve adjacency.
+
+The two time columns below are separate sample medians. The last column is
+computed from the median of the six paired before/after ratios, so it need not
+equal the ratio of those two columns. All allocation measurements were stable
+across the six samples.
+
+| Operation | v1.1.0 median | Updated median | Paired time reduction |
+| --- | ---: | ---: | ---: |
+| Open/read 4 KiB/close, 16 B chunks | 1.433 us | 1.201 us | 16.9% |
+| Open/read 4 KiB/close, 64 B chunks | 412.65 ns | 345.45 ns | 16.7% |
+| Open/read 4 KiB/close, 256 B chunks | 184.05 ns | 153.95 ns | 16.6% |
+| List names only, 1,000 entries | 141.17 us | 114.49 us | 18.4% |
+| List + every Info, 100 entries | 10.61 us | 7.30 us | 32.4% |
+| List + every Info, 1,000 entries | 156.32 us | 112.37 us | 26.9% |
+| List + every Info, 10,000 entries | 2.141 ms | 1.559 ms | 27.1% |
+
+Small reads remain 128 B/op and one allocation. Listing and reading all metadata
+for 1,000 entries drops from 144,512 to 80,512 B/op (44.3% less) and from
+2,002 to 1,002 allocations. Names-only listings retain their existing bytes and
+allocation counts. Repeated no-hook `Info` calls drop from 64 B and one
+allocation per call to zero. Fresh hook listings followed by every `Info` are
+approximately unchanged in time (paired changes from -0.3% to +3.4% faster)
+and retain the same allocation counts; cached hook metadata remains allocation
+free. The 4 KiB single-chunk read control had mixed pair timings, so no stable
+timing improvement is claimed for it.
+
+A further six-pair control used original `soulteary/memfs` v0.1.0
+(`b8d5ff9859d1c18004594f555725fb241563c1a0`) with the same workloads. The
+updated 1,000-entry listing plus every `Info` took about 18.9% less time than
+the original and allocated 28.6% fewer bytes. The 64 B chunk read still took
+about 48% more time than the original in the paired measurement. The original
+does not synchronize a file handle's cursor or its close operation; this change
+retains that synchronization. These controls use a static tree and independent
+handles, where both implementations can be compared without concurrent writes
+or shared-handle races.
+
+The final code passed the full race-enabled suite with 97.9% statement coverage,
+vet, formatting, module checks and a smoke run of every benchmark. Path
+validation passed a 15-second, two-worker fuzz run. Added boundary, concurrent
+cursor, retained metadata and panic-cache tests also passed against v1.1.0,
+confirming that they check existing behavior. These local timings describe the
+measured workloads and are not application-throughput guarantees.
