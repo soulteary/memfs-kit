@@ -66,11 +66,13 @@ func main() {
 | `(*FS).MkdirAll(path, perm)` | 创建目录及缺失的父目录 |
 | `(*FS).WriteFile(path, data, perm)` | 新建或替换文件，父目录必须已经存在 |
 | `(*FS).Open(path)` | 打开只读文件或目录快照 |
+| `(*FS).Stat(path)` | 获取元数据，保留与 `Open` 一致的 hook 行为 |
+| `(*FS).ReadDir(path)` | 返回排序后的独立目录条目快照 |
 | `(*FS).Sub(dir)` | 返回现有子目录的 `fs.FS` 视图 |
 | `WithOpenHook(fn)` | 为单次打开转换内容，或提供虚拟文件内容 |
 
-`*FS` 实现 `fs.FS` 和 `fs.SubFS`，可以直接配合 `fs.ReadFile`、`fs.ReadDir`、
-`fs.Stat`、`fs.WalkDir`、`fs.Glob` 等标准库函数使用。普通文件句柄实现
+`*FS` 实现 `fs.FS`、`fs.StatFS`、`fs.ReadDirFS` 和 `fs.SubFS`，可以直接配合
+`fs.ReadFile`、`fs.ReadDir`、`fs.Stat`、`fs.WalkDir`、`fs.Glob` 等标准库函数使用。普通文件句柄实现
 `fs.File`、`io.Seeker` 和 `io.ReaderAt`，目录句柄实现 `fs.ReadDirFile`。
 
 ## 行为与边界
@@ -114,9 +116,10 @@ func(path string, existingContent []byte, origErr error) ([]byte, error)
 `Name`、`Type`、`IsDir` 都不会执行 hook。
 
 目录、非法路径，以及穿过普通文件继续向下访问的路径不会触发 hook。回调在文件树锁和句柄锁
-之外执行，可以调用文件系统方法。输入数据会复制，作为文件内容使用的输出数据也会复制，
-修改输入切片不会改变底层文件内容。不同条目和打开操作可能并发调用 hook；不要在某个
-条目的 hook 中递归调用该条目自己的 `Info()`，否则会等待自身尚未完成的首次计算。
+之外执行，可以调用文件系统方法。输入数据会复制，内容快照与 hook 保留的输入、输出切片
+保持隔离，修改这些切片不会改变底层文件或已打开的内容。不同条目、打开操作和 `Stat`
+调用可能并发执行 hook；不要在某个条目的 hook 中递归调用该条目自己的 `Info()`，
+否则会等待自身尚未完成的首次计算。
 递归打开同一路径也需要明确的终止条件。
 
 hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` 权限元数据，不出现在目录列表里，
@@ -126,7 +129,7 @@ hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` �
 避免 `http.FileServer` 依据底层文件已经失效的修改时间，错误返回 `304 Not Modified`。
 原样返回内容时保留原来的元数据；临时合成文件的修改时间也为零。
 
-条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果；之后的 `Open`
+条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果；之后的 `Open` 或 `FS.Stat`
 会再次执行 hook。归档写入等需要比较元数据与另一次打开结果的消费者，要求 hook 在这些
 操作之间提供稳定的输出。
 
@@ -164,7 +167,10 @@ go vet ./...
 go test ./...
 go test -race -coverprofile=coverage.out ./...
 go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
+go test -run='^$' -bench=. -benchmem -count=5 .
 ```
+
+优化范围、可复现的基准对比，以及包装文件系统时的可选接口行为，见[性能说明](docs/PERFORMANCE.md)。
 
 CI 检查格式、模块一致性和 `go vet`，在 Linux、macOS、Windows 上执行测试，并在 Linux
 上运行竞态检测、覆盖率报告与短时 fuzz。

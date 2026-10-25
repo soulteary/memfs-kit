@@ -26,8 +26,8 @@ func (o openHookOption) setOption(options *fsOption) {
 	options.openHook = o.hook
 }
 
-// WithOpenHook sets a callback for opening existing regular files or paths
-// that return fs.ErrNotExist, and for resolving regular-file DirEntry.Info.
+// WithOpenHook sets a callback for Open and Stat on existing regular files or
+// paths that return fs.ErrNotExist, and for resolving regular-file DirEntry.Info.
 // Directories, invalid paths and paths through a regular file bypass the hook.
 // A nil callback disables the hook.
 //
@@ -47,10 +47,13 @@ func (o openHookOption) setOption(options *fsOption) {
 // Consumers that compare metadata with separately opened content, such as tar
 // writers, require a deterministic hook or stable application state.
 //
-// The callback runs without tree or handle locks and may write to the FS. Its
-// returned bytes are copied before use. Concurrent opens or distinct entries
-// may invoke it simultaneously; callers must synchronize their own hook state.
-// A callback must not recursively Open the same path without a stopping rule.
+// The callback runs without tree or handle locks and may write to the FS.
+// Content snapshots remain isolated from input or output bytes retained by the
+// callback. Unchanged content reuses the immutable stored snapshot; different
+// content is copied when needed by an open handle. Concurrent opens, Stat calls,
+// or distinct entries may invoke it simultaneously; callers must synchronize
+// their own hook state.
+// A callback must not recursively Open or Stat the same path without a stopping rule.
 // It must not call Info recursively on the same DirEntry, whose result is still
 // being initialized.
 func WithOpenHook(f func(string, []byte, error) ([]byte, error)) Option {

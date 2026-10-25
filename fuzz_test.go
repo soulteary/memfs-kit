@@ -28,6 +28,8 @@ func FuzzPathValidation(f *testing.F) {
 				run  func() error
 			}{
 				{"Open", func() error { _, err := fsys.Open(name); return err }},
+				{"Stat", func() error { _, err := fsys.Stat(name); return err }},
+				{"ReadDir", func() error { _, err := fsys.ReadDir(name); return err }},
 				{"Sub", func() error { _, err := fsys.Sub(name); return err }},
 				{"MkdirAll", func() error { return fsys.MkdirAll(name, 0o755) }},
 				{"WriteFile", func() error { return fsys.WriteFile(name, content, 0o644) }},

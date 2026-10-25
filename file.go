@@ -22,7 +22,7 @@ type File struct {
 	mu     sync.Mutex
 	path   string
 	info   fileInfo
-	reader *bytes.Reader
+	reader bytes.Reader
 	closed bool
 }
 
@@ -83,7 +83,7 @@ func (f *File) Close() error {
 		return pathError("close", f.path, fs.ErrClosed)
 	}
 	f.closed = true
-	f.reader = nil
+	f.reader.Reset(nil)
 	return nil
 }
 
@@ -172,7 +172,7 @@ func newDirEntry(name, hookName string, info fileInfo, data []byte, hook openHoo
 	entry := dirEntry{info: info}
 	if hook != nil && !info.IsDir() {
 		entry.infoFn = sync.OnceValues(func() (fs.FileInfo, error) {
-			resolved, _, err := applyOpenHook(hook, name, hookName, info, data, nil)
+			resolved, _, err := applyOpenHook(hook, name, hookName, info, data, nil, false)
 			if err != nil {
 				return nil, err
 			}
