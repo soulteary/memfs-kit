@@ -14,6 +14,19 @@
 `http.FileServer(http.FS(root))`。文件系统拥有独立的数据副本，支持并发操作，
 每次打开文件都会获得独立、支持定位读取的快照。运行和测试均不依赖第三方 Go 库。
 
+## v1.1.0
+
+v1.1.0 包含四项性能优化：
+
+- `FS.Stat` 只查询一次文件树，读取目录元数据时不再构造目录列表。
+- hook 原样返回内容时复用不可变文件数据；只取元数据时省去随后丢弃的内容副本。
+- 路径遍历和文件读取器减少内存分配。
+- 打开目录时只为需要 hook 的条目构造子路径，`FS.ReadDir` 省去重复的切片复制和排序。
+
+快照所有权、hook 行为和并发保证保持不变。环境要求仍为 Go 1.27.3 或更新版本，
+不引入第三方依赖。具体变化和测量结果见
+[v1.1.0 发布说明](.github/releases/v1.1.0.md)与[性能说明](docs/PERFORMANCE.md)。
+
 ## 环境与安装
 
 需要 **Go 1.27.3 或更新版本**。
@@ -72,7 +85,8 @@ func main() {
 | `WithOpenHook(fn)` | 为单次打开转换内容，或提供虚拟文件内容 |
 
 `*FS` 实现 `fs.FS`、`fs.StatFS`、`fs.ReadDirFS` 和 `fs.SubFS`，可以直接配合
-`fs.ReadFile`、`fs.ReadDir`、`fs.Stat`、`fs.WalkDir`、`fs.Glob` 等标准库函数使用。普通文件句柄实现
+`fs.ReadFile`、`fs.ReadDir`、`fs.Stat`、`fs.WalkDir`、`fs.Glob` 等标准库函数使用。
+`fs.Stat` 和 `fs.ReadDir` 会自动调用新增的可选接口方法。普通文件句柄实现
 `fs.File`、`io.Seeker` 和 `io.ReaderAt`，目录句柄实现 `fs.ReadDirFile`。
 
 ## 行为与边界
@@ -117,7 +131,7 @@ func(path string, existingContent []byte, origErr error) ([]byte, error)
 
 目录、非法路径，以及穿过普通文件继续向下访问的路径不会触发 hook。回调在文件树锁和句柄锁
 之外执行，可以调用文件系统方法。输入数据会复制，内容快照与 hook 保留的输入、输出切片
-保持隔离，修改这些切片不会改变底层文件或已打开的内容。不同条目、打开操作和 `Stat`
+保持隔离，修改这些切片不会改变底层文件或已打开的内容。不同条目、打开操作和 `FS.Stat`
 调用可能并发执行 hook；不要在某个条目的 hook 中递归调用该条目自己的 `Info()`，
 否则会等待自身尚未完成的首次计算。
 递归打开同一路径也需要明确的终止条件。
@@ -129,9 +143,10 @@ hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` �
 避免 `http.FileServer` 依据底层文件已经失效的修改时间，错误返回 `304 Not Modified`。
 原样返回内容时保留原来的元数据；临时合成文件的修改时间也为零。
 
-条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果；之后的 `Open` 或 `FS.Stat`
-会再次执行 hook。归档写入等需要比较元数据与另一次打开结果的消费者，要求 hook 在这些
-操作之间提供稳定的输出。
+条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果。对普通文件或不存在
+路径的每次 `Open`、`FS.Stat` 都会重新执行 hook；已打开文件句柄的 `File.Stat` 只返回捕获的
+元数据，不会再次执行 hook。归档写入等需要比较元数据与另一次打开结果的消费者，要求 hook
+在这些操作之间提供稳定的输出。
 
 带有 hook 且尚未计算 `Info()` 的普通文件条目，会保留捕获的内容，直到首次计算完成或
 该条目被丢弃。关闭目录会释放句柄自身的引用，但已经交给调用方的条目仍然有效，包括其
@@ -149,6 +164,9 @@ hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` �
 
 `New` 现在接受可变数量的选项；仅当代码将它赋给精确的 `func() *memfs.FS` 类型变量时，
 需要改用 `func() *memfs.FS { return memfs.New() }` 这样的包装函数。
+
+嵌入 `*memfs.FS` 并覆盖 `Open` 的包装器，也应覆盖或隐藏 `Stat`、`ReadDir`，
+详见[可选接口分派说明](docs/PERFORMANCE.md#wrappers-and-optional-interfaces)。
 
 本项目从 [soulteary/memfs](https://github.com/soulteary/memfs) 迁移，并参考了
 [psanford/memfs](https://github.com/psanford/memfs) 的后续更新。迁移同时修复锁处理、

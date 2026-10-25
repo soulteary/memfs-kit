@@ -1,6 +1,6 @@
 # Performance
 
-These changes reduce allocation and directory work while preserving the
+Version 1.1.0 reduces allocation and directory work while preserving the
 filesystem's existing snapshot and hook behavior. There are no new dependencies
 or changes to existing method signatures. `Stat` and `ReadDir` add the standard
 `fs.StatFS` and `fs.ReadDirFS` optional interfaces.

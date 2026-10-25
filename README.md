@@ -15,6 +15,20 @@ templates and `http.FileServer(http.FS(root))`. The filesystem owns its data,
 supports concurrent operations, and returns independent, seekable file
 snapshots. There are no dependencies outside the Go standard library.
 
+## v1.1.0
+
+v1.1.0 includes four performance improvements:
+
+- `FS.Stat` reads metadata with one tree lookup and avoids building directory listings.
+- Unchanged hook output reuses immutable file content; metadata-only hook calls avoid discarded content copies.
+- Path traversal and file readers use fewer allocations.
+- Directory opens build child paths only when hooks need them, and `FS.ReadDir` avoids a duplicate slice copy and sort.
+
+Snapshot ownership, hook behavior, and concurrency guarantees remain unchanged.
+Requirements remain Go 1.27.3 or newer, with no third-party dependencies. See the
+[v1.1.0 release notes](.github/releases/v1.1.0.md) and
+[performance notes](docs/PERFORMANCE.md) for details and measurements.
+
 ## Requirements and installation
 
 Go **1.27.3 or newer**.
@@ -74,6 +88,7 @@ func main() {
 
 `*FS` implements `fs.FS`, `fs.StatFS`, `fs.ReadDirFS`, and `fs.SubFS`. Use standard
 helpers such as `fs.ReadFile`, `fs.ReadDir`, `fs.Stat`, `fs.WalkDir`, and `fs.Glob` with it.
+`fs.Stat` and `fs.ReadDir` automatically dispatch to the new optional methods.
 Regular file handles implement `fs.File`, `io.Seeker`, and `io.ReaderAt`.
 Directory handles implement `fs.ReadDirFile`.
 
@@ -136,7 +151,7 @@ do not invoke the callback. The callback runs outside tree and handle
 locks, so it may call filesystem methods. Input bytes are copied, and content
 snapshots stay isolated from input or output bytes retained by the callback;
 the callback cannot mutate stored file data by changing its input slice.
-Different entries, opens, and `Stat` calls may invoke the hook concurrently.
+Different entries, opens, and `FS.Stat` calls may invoke the hook concurrently.
 Do not recursively call the same entry's `Info()` from its hook:
 that entry waits for its first metadata calculation to complete. Likewise,
 recursively opening the same path requires a stopping rule.
@@ -152,9 +167,11 @@ Returning unchanged content preserves the original metadata. Synthesized
 files also have an unknown modification time.
 
 An entry's first `Info()` call observes the hook's state at that call; later
-calls reuse its cached result. A later `Open` or `FS.Stat` invokes the hook again. Consumers
-that compare metadata with a separate open, such as archive writers, need a
-hook whose output remains stable across those operations.
+calls reuse its cached result. Each `Open` or `FS.Stat` on a regular or missing
+path invokes the hook again. On an open file handle, `File.Stat` returns the
+captured metadata without invoking the hook. Consumers that compare metadata
+with a separate open, such as archive writers, need a hook whose output remains
+stable across those operations.
 
 An unresolved regular-file entry with a hook retains its captured content until
 its first `Info()` calculation completes or the entry is discarded. Closing the
@@ -176,6 +193,9 @@ Change the import path from `github.com/soulteary/memfs` to
 `New` now accepts variadic options. Code assigning it to an exact
 `func() *memfs.FS` variable must use a wrapper such as
 `func() *memfs.FS { return memfs.New() }`.
+
+Wrappers that embed `*memfs.FS` and override `Open` should also override or hide
+`Stat` and `ReadDir`; see [optional-interface dispatch](docs/PERFORMANCE.md#wrappers-and-optional-interfaces).
 
 This project starts from [soulteary/memfs](https://github.com/soulteary/memfs)
 and incorporates reviewed ideas from

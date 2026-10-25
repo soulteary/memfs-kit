@@ -2,11 +2,30 @@
 
 The release version is stored in the root `VERSION` file, without a `v` prefix.
 Release notes live in `.github/releases/v<version>.md`. For example, version
-`1.0.0` uses `.github/releases/v1.0.0.md` and the Git tag `v1.0.0`.
+`1.1.0` uses `.github/releases/v1.1.0.md` and the Git tag `v1.1.0`.
 
-To prepare a release, update both files in a pull request and merge it to
-`main`. The Release workflow runs after the main-branch CI workflow completes
-successfully. Pull-request CI never publishes a release.
+## Prepare the release pull request
+
+Choose the next version for the public API changes. For example, v1.1.0 adds
+the `Stat` and `ReadDir` methods and their standard optional interfaces, so it
+is a minor release. The Go module path stays `github.com/soulteary/memfs-kit`.
+
+Update `VERSION` and create its matching release-notes file. Describe new
+capabilities, compatibility considerations, requirements, and validation. Update
+both READMEs to match, and link performance claims to their benchmark conditions.
+Keep previously published release notes unchanged. Generated quality reports
+are maintained by CI rather than edited during release preparation.
+
+Before merging, verify that the version, notes filename, and versioned install
+command agree and that the pull request's CI passes. Preparing the branch and
+pull request does not create a tag or release.
+
+## Publish through main CI
+
+Merging the release-preparation pull request to `main` is the publication
+trigger. The Release workflow runs after the main-branch CI workflow completes
+successfully. Pull-request CI never publishes a release. A preparation request
+can stop at the reviewed pull request; merge only when ready to publish.
 
 The publisher checks that the default branch still matches the tested source.
 It also accepts one direct report-only commit from `github-actions[bot]`, so
