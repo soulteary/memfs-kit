@@ -14,6 +14,6 @@
 // There are no symlinks, OS mounts, persistence or permission enforcement.
 //
 // Filesystem operations and individual handle methods are safe for concurrent
-// use. Hooks execute outside internal locks and are responsible for the safety
-// of their own shared state. Permission bits are stored as metadata only.
+// use. Hooks execute outside tree and handle locks and are responsible for
+// the safety of their own shared state. Permission bits are metadata only.
 package memfs

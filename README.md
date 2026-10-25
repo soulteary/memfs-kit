@@ -85,6 +85,9 @@ Directory handles implement `fs.ReadDirFile`.
 - **Open snapshots:** replacing a file does not change an already open
   handle's content or metadata. Each open has its own cursor; seeking past
   the end is allowed, and reading there returns EOF.
+- **Closing handles:** `Close` releases the handle's references to captured
+  file contents or directory entries. Other open handles and the filesystem
+  retain their own references. Further handle operations return `fs.ErrClosed`.
 - **Directories:** an open directory contains a sorted snapshot of its
   entries. Repeated `ReadDir(n)` calls advance correctly, including EOF
   behavior for positive `n`. Changes made after the open appear on a new
@@ -110,16 +113,27 @@ Directory handles implement `fs.ReadDirFile`.
 func(path string, existingContent []byte, origErr error) ([]byte, error)
 ```
 
-The callback runs for regular files and missing paths. For a missing path,
+The callback runs when opening regular files and missing paths. For a missing path,
 `existingContent` is `nil` and `origErr` matches `fs.ErrNotExist`. Returning
 bytes and a `nil` error supplies content for that open; returning
 `existingContent, origErr` preserves normal behavior.
 
+For a regular file in a directory listing, its `DirEntry.Info()` also runs the
+hook on first use. It uses the file snapshot captured when the directory was
+opened and caches the resulting metadata or error for that entry. This keeps
+the reported size and modification time consistent with transformed content,
+including when a stable hook is consumed by archive writers. Opening a
+directory, reading its entries, and calling `Name`, `Type`, or `IsDir` do not
+run hooks.
+
 Directories, invalid paths, and paths that traverse through a regular file
-do not invoke the callback. The callback runs outside internal filesystem
-locks, so it may call filesystem methods. Both the input and returned bytes
-are copied at the boundary; the callback cannot mutate the stored file by
-changing its input slice.
+do not invoke the callback. The callback runs outside tree and handle
+locks, so it may call filesystem methods. Input bytes are copied, and output
+used as file content is copied; the callback cannot mutate stored file data
+by changing its input slice. Different entries and opens may invoke the hook
+concurrently. Do not recursively call the same entry's `Info()` from its hook:
+that entry waits for its first metadata calculation to complete. Likewise,
+recursively opening the same path requires a stopping rule.
 
 Content returned by a hook is not written back to the tree. A synthesized
 file uses mode `0444`, does not appear in directory listings, and cannot
@@ -130,6 +144,17 @@ is zero (unknown). This prevents `http.FileServer` from using the stored
 file's stale modification time to return an incorrect `304 Not Modified`.
 Returning unchanged content preserves the original metadata. Synthesized
 files also have an unknown modification time.
+
+An entry's first `Info()` call observes the hook's state at that call; later
+calls reuse its cached result. A later `Open` invokes the hook again. Consumers
+that compare metadata with a separate open, such as archive writers, need a
+hook whose output remains stable across those operations.
+
+An unresolved regular-file entry with a hook retains its captured content until
+its first `Info()` calculation completes or the entry is discarded. Closing the
+directory releases the handle's references, but entries already returned to the
+caller remain usable, including their deferred `Info()` calls. The stored data
+and metadata are captured at directory open; the hook's external state is not.
 
 Hook paths are relative to the filesystem originally created by `New`.
 For example, `fs.Sub(root, "assets")` followed by `Open("hello.txt")` passes
