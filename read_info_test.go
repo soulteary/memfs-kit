@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	memfs "github.com/soulteary/memfs-kit"
 )
@@ -211,6 +212,15 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 			calls.Store(0)
 			oldFile, oldDir := findHookTestEntry(t, entries, "file"), findHookTestEntry(t, entries, "dir")
 			mustWrite(t, root, "file", "replacement is longer")
+			// Consecutive time.Now calls can be equal on Windows. Ensure the
+			// next write can give the directory a distinct timestamp before
+			// checking that its already-captured metadata remains unchanged.
+			for attempts := 0; !time.Now().After(beforeDir.ModTime()); attempts++ {
+				if attempts == 1000 {
+					t.Fatal("clock did not advance beyond the captured directory timestamp")
+				}
+				time.Sleep(time.Millisecond)
+			}
 			mustWrite(t, root, "dir/new-child", "changes the directory timestamp")
 			currentDir, err := fs.Stat(root, "dir")
 			if err != nil {
