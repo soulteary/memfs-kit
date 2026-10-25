@@ -67,11 +67,13 @@ func main() {
 | `(*FS).MkdirAll(path, perm)` | Create a directory and any missing parents |
 | `(*FS).WriteFile(path, data, perm)` | Create or replace a file; its parent directory must already exist |
 | `(*FS).Open(path)` | Open a read-only file or directory snapshot |
+| `(*FS).Stat(path)` | Read metadata with the same hook behavior as `Open` |
+| `(*FS).ReadDir(path)` | Return a sorted, independent directory-entry snapshot |
 | `(*FS).Sub(dir)` | Return an `fs.FS` view of an existing subtree |
 | `WithOpenHook(fn)` | Transform file content or provide a virtual file for an individual open |
 
-`*FS` implements `fs.FS` and `fs.SubFS`. Use standard helpers such as
-`fs.ReadFile`, `fs.ReadDir`, `fs.Stat`, `fs.WalkDir`, and `fs.Glob` with it.
+`*FS` implements `fs.FS`, `fs.StatFS`, `fs.ReadDirFS`, and `fs.SubFS`. Use standard
+helpers such as `fs.ReadFile`, `fs.ReadDir`, `fs.Stat`, `fs.WalkDir`, and `fs.Glob` with it.
 Regular file handles implement `fs.File`, `io.Seeker`, and `io.ReaderAt`.
 Directory handles implement `fs.ReadDirFile`.
 
@@ -131,10 +133,11 @@ run hooks.
 
 Directories, invalid paths, and paths that traverse through a regular file
 do not invoke the callback. The callback runs outside tree and handle
-locks, so it may call filesystem methods. Input bytes are copied, and output
-used as file content is copied; the callback cannot mutate stored file data
-by changing its input slice. Different entries and opens may invoke the hook
-concurrently. Do not recursively call the same entry's `Info()` from its hook:
+locks, so it may call filesystem methods. Input bytes are copied, and content
+snapshots stay isolated from input or output bytes retained by the callback;
+the callback cannot mutate stored file data by changing its input slice.
+Different entries, opens, and `Stat` calls may invoke the hook concurrently.
+Do not recursively call the same entry's `Info()` from its hook:
 that entry waits for its first metadata calculation to complete. Likewise,
 recursively opening the same path requires a stopping rule.
 
@@ -149,7 +152,7 @@ Returning unchanged content preserves the original metadata. Synthesized
 files also have an unknown modification time.
 
 An entry's first `Info()` call observes the hook's state at that call; later
-calls reuse its cached result. A later `Open` invokes the hook again. Consumers
+calls reuse its cached result. A later `Open` or `FS.Stat` invokes the hook again. Consumers
 that compare metadata with a separate open, such as archive writers, need a
 hook whose output remains stable across those operations.
 
@@ -196,7 +199,11 @@ go vet ./...
 go test ./...
 go test -race -coverprofile=coverage.out ./...
 go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
+go test -run='^$' -bench=. -benchmem -count=5 .
 ```
+
+See [performance notes](docs/PERFORMANCE.md) for the optimization scope,
+reproducible comparisons, and optional-interface behavior when wrapping an FS.
 
 CI checks formatting, module consistency, and `go vet`; runs tests on Linux,
 macOS, and Windows; and runs race detection, coverage reporting, and a short

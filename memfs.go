@@ -18,7 +18,8 @@ import (
 	"time"
 )
 
-// FS is a writable in-memory filesystem that implements fs.FS and fs.SubFS.
+// FS is a writable in-memory filesystem that implements fs.FS, fs.StatFS,
+// fs.ReadDirFS, and fs.SubFS.
 // Use New to construct an FS; its zero value is not ready for use.
 //
 // Filesystem operations are safe for concurrent use, including operations on
@@ -45,8 +46,10 @@ type node struct {
 }
 
 var (
-	_ fs.FS    = (*FS)(nil)
-	_ fs.SubFS = (*FS)(nil)
+	_ fs.FS        = (*FS)(nil)
+	_ fs.StatFS    = (*FS)(nil)
+	_ fs.ReadDirFS = (*FS)(nil)
+	_ fs.SubFS     = (*FS)(nil)
 )
 
 // New creates an empty filesystem. Its root directory has mode 0755.
@@ -82,7 +85,7 @@ func (rootFS *FS) MkdirAll(name string, perm fs.FileMode) error {
 	defer rootFS.tree.mu.Unlock()
 
 	current := rootFS.root
-	for _, part := range strings.Split(name, "/") {
+	for part := range strings.SplitSeq(name, "/") {
 		child, exists := current.children[part]
 		if exists {
 			if child.children == nil {
@@ -161,9 +164,13 @@ func (rootFS *FS) Open(name string) (fs.File, error) {
 		}
 		entries := make([]fs.DirEntry, 0, len(entry.children))
 		for _, child := range entry.children {
-			childName := path.Join(name, child.info.name)
+			var childName, hookName string
+			if rootFS.openHook != nil && !child.info.IsDir() {
+				childName = path.Join(name, child.info.name)
+				hookName = rootFS.hookPath(childName)
+			}
 			entries = append(entries, newDirEntry(
-				childName, rootFS.hookPath(childName), child.info, child.data, rootFS.openHook,
+				childName, hookName, child.info, child.data, rootFS.openHook,
 			))
 		}
 		rootFS.tree.mu.RUnlock()
@@ -186,18 +193,82 @@ func (rootFS *FS) Open(name string) (fs.File, error) {
 		}
 	}
 	if rootFS.openHook != nil {
-		info, data, err = applyOpenHook(rootFS.openHook, name, rootFS.hookPath(name), info, data, err)
+		info, data, err = applyOpenHook(rootFS.openHook, name, rootFS.hookPath(name), info, data, err, true)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &File{path: name, info: info, reader: bytes.NewReader(data)}, nil
+	f := &File{path: name, info: info}
+	f.reader.Reset(data)
+	return f, nil
 }
 
-// applyOpenHook is shared by Open and lazy directory-entry metadata so both
+// Stat returns the metadata of a file or directory without opening a handle.
+// Regular and virtual files retain Open's hook and error behavior. Directory
+// metadata does not require constructing a directory-entry snapshot.
+func (rootFS *FS) Stat(name string) (fs.FileInfo, error) {
+	if !fs.ValidPath(name) {
+		return nil, pathError("open", name, fs.ErrInvalid)
+	}
+	rootFS.tree.mu.RLock()
+	entry, err := rootFS.lookup(name)
+	var info fileInfo
+	var data []byte
+	var directory bool
+	if err == nil {
+		info, data = entry.info, entry.data
+		directory = entry.children != nil
+		if directory && name == "." {
+			info.name = "."
+		}
+	}
+	rootFS.tree.mu.RUnlock()
+
+	if directory {
+		return info, nil
+	}
+	// Match Open's errors and hook ordering without allocating a file handle
+	// or looking up the path a second time.
+	if err != nil {
+		err = pathError("open", name, err)
+		if rootFS.openHook == nil || !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if rootFS.openHook != nil {
+		info, _, err = applyOpenHook(rootFS.openHook, name, rootFS.hookPath(name), info, data, err, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return info, nil
+}
+
+// ReadDir returns a new, sorted snapshot of the directory's entries. As with
+// Open, regular-file metadata is resolved lazily by each entry's Info method.
+func (rootFS *FS) ReadDir(name string) ([]fs.DirEntry, error) {
+	f, err := rootFS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	dir, ok := f.(*dirFile)
+	if !ok {
+		// Match fs.ReadDir's fallback after a successful regular-file Open,
+		// including hooks that supply virtual files or reject the open.
+		return nil, pathError("readdir", name, errors.New("not implemented"))
+	}
+	// This handle is private: its entries have never been exposed by a
+	// paginated read. Close only drops the handle's reference, so the caller
+	// owns the returned slice and its lazy metadata after the handle closes.
+	return dir.entries, nil
+}
+
+// applyOpenHook is shared by Open, Stat and lazy directory-entry metadata so all
 // describe the same transformed file. Callers must not hold tree/handle locks.
 // origErr is nil or the *fs.PathError constructed by Open for a missing path.
-func applyOpenHook(hook openHook, name, hookName string, info fileInfo, data []byte, origErr error) (fileInfo, []byte, error) {
+// snapshotContent is false when only the resulting metadata will be used.
+func applyOpenHook(hook openHook, name, hookName string, info fileInfo, data []byte, origErr error, snapshotContent bool) (fileInfo, []byte, error) {
 	content, err := hook(hookName, bytes.Clone(data), origErr)
 	if err != nil {
 		if origErr != nil && err == origErr {
@@ -207,16 +278,24 @@ func applyOpenHook(hook openHook, name, hookName string, info fileInfo, data []b
 		}
 		return fileInfo{}, nil, pathError("open", name, err)
 	}
-	updated := bytes.Clone(content)
+	unchanged := origErr == nil && bytes.Equal(content, data)
 	if origErr != nil {
-		// A virtual file exists only for this Open and has no stored timestamp.
+		// A virtual file exists only for this operation and has no stored timestamp.
 		info = fileInfo{name: path.Base(name), mode: 0o444}
-	} else if !bytes.Equal(updated, data) {
+	} else if !unchanged {
 		// Stored timestamps cannot validate transformed HTTP content.
 		info.modTime = time.Time{}
 	}
-	info.size = int64(len(updated))
-	return info, updated, nil
+	info.size = int64(len(content))
+	if !snapshotContent {
+		return info, nil, nil
+	}
+	if unchanged {
+		// Published content is immutable. Reusing it also isolates the open
+		// handle from hook input/output slices retained by the callback.
+		return info, data, nil
+	}
+	return info, bytes.Clone(content), nil
 }
 
 // Sub returns a view of an existing directory. The view shares subsequent
@@ -250,7 +329,7 @@ func (rootFS *FS) lookup(name string) (*node, error) {
 	if name == "." {
 		return current, nil
 	}
-	for _, part := range strings.Split(name, "/") {
+	for part := range strings.SplitSeq(name, "/") {
 		if current.children == nil {
 			return nil, fs.ErrInvalid
 		}
