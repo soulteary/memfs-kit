@@ -107,7 +107,8 @@ jobs:
           timeout: 3m
           test_args: -count=1
           coverage_threshold: '0'
-          version: v1.1.2
+          # v1.1.2's release installer errors in its EXIT trap; use the same pinned source.
+          version: source
           commit: 'false'
       - name: Display coverage from the same test run
         run: go tool cover -func=.github/test-results/coverage.out
