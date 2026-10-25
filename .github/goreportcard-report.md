@@ -22,10 +22,6 @@
 
 ### gocyclo
 
-- `memfs_test.go`
-  - Line 37: cyclomatic complexity 16 for function TestMemFS
-- `hook_errors_test.go`
-  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 - `fuzz_test.go`
   - Line 16: cyclomatic complexity 16 for function FuzzPathValidation
 - `fastpaths_test.go`
@@ -39,6 +35,10 @@
 - `concurrency_views_test.go`
   - Line 20: cyclomatic complexity 20 for function TestConcurrentParentAndSubtreeWrites
   - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
+- `memfs_test.go`
+  - Line 37: cyclomatic complexity 16 for function TestMemFS
+- `hook_errors_test.go`
+  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 
 ### misspell
 
