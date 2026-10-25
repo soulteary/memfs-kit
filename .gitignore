@@ -1,4 +1,5 @@
 /coverage.out
 /coverage.html
+/.github/test-results/
 /*.test
 /*.test.exe

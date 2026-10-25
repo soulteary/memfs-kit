@@ -1,7 +1,10 @@
 # memfs-kit
 
-[![CI](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml)
+[![CI](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/memfs-kit.svg)](https://pkg.go.dev/github.com/soulteary/memfs-kit)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go Test Coverage](./.github/coverage.svg)](./.github/go-test-report.md)
+[![Go Report Card](./.github/goreportcard.svg)](./.github/goreportcard-report.md)
 
 [English](README.md)
 
@@ -164,8 +167,15 @@ go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
 ```
 
 CI 检查格式、模块一致性和 `go vet`，在 Linux、macOS、Windows 上执行测试，并在 Linux
-上运行竞态检测、覆盖率报告与短时 fuzz。GitHub Actions 固定到经过核实的提交 SHA，
-由 Dependabot 跟踪更新。
+上运行竞态检测、覆盖率报告与短时 fuzz。
+[Go Test Report](https://github.com/soulteary/go-test-report-action) 生成测试与覆盖率报告，
+[Go Report Card](https://github.com/soulteary/goreportcard-action) 生成代码质量报告。
+GitHub Actions 固定到经过核实的提交 SHA，由 Dependabot 跟踪更新。
+
+推送到 `main`，或选择 `main` 手动运行 CI，全部必要检查通过后会刷新报告和徽章。
+独立的发布 job 只回写五个报告文件，而且被测源码必须仍然对应默认分支 HEAD；
+PR 只生成报告 artifact，不向仓库写入文件。触发条件、artifact 和发布规则见
+[Go 报告策略](.github/GO-REPORTS.md)。
 
 ## 许可证
 
