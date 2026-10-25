@@ -178,7 +178,7 @@ func (d *plainDirEntry) Type() fs.FileMode          { return d.mode.Type() }
 func (d *plainDirEntry) Info() (fs.FileInfo, error) { return &d.fileInfo, nil }
 
 // newDirEntry captures only the immutable file snapshot, not its parent tree.
-// Metadata is lazy: listing names does not execute application callbacks.
+// Hook metadata is lazy: listing names does not execute application callbacks.
 func newDirEntry(name, hookName string, info fileInfo, data []byte, hook openHook) fs.DirEntry {
 	if hook == nil || info.IsDir() {
 		return &plainDirEntry{fileInfo: info}

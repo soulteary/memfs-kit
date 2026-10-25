@@ -15,26 +15,32 @@ templates and `http.FileServer(http.FS(root))`. The filesystem owns its data,
 supports concurrent operations, and returns independent, seekable file
 snapshots. There are no dependencies outside the Go standard library.
 
-## v1.1.0
+## v1.1.1
 
-v1.1.0 includes four performance improvements:
+This patch reduces small-read and directory-entry metadata overhead:
 
-- `FS.Stat` reads metadata with one tree lookup and avoids building directory listings.
-- Unchanged hook output reuses immutable file content; metadata-only hook calls avoid discarded content copies.
-- Path traversal and file readers use fewer allocations.
-- Directory opens build child paths only when hooks need them, and `FS.ReadDir` avoids a duplicate slice copy and sort.
+- `File.Read` keeps the same per-handle synchronization with less work per call.
+- Entries without a regular-file hook return their existing immutable metadata
+  snapshot from `Info`, avoiding another allocation on each call.
 
-Snapshot ownership, hook behavior, and concurrency guarantees remain unchanged.
-Requirements remain Go 1.27.3 or newer, with no third-party dependencies. See the
-[v1.1.0 release notes](.github/releases/v1.1.0.md) and
-[performance notes](docs/PERFORMANCE.md) for details and measurements.
+In a local six-pair comparison against v1.1.0, reading a 4 KiB file in 64 B
+chunks took **16.7% less time**. Listing 1,000 entries and calling every `Info`
+took **26.9% less time** and allocated **44.3% fewer bytes**. Hook listing
+performance was approximately unchanged. These are workload-specific
+microbenchmarks, not application-throughput guarantees.
+
+Existing API, snapshot ownership, hook behavior, and concurrency guarantees
+remain unchanged. See the [v1.1.1 release notes](.github/releases/v1.1.1.md) and
+[performance notes](docs/PERFORMANCE.md#v111-small-reads-and-entry-metadata)
+for conditions and remaining costs. The earlier optional-interface and allocation
+improvements are recorded in the [v1.1.0 release notes](.github/releases/v1.1.0.md).
 
 ## Requirements and installation
 
 Go **1.27.3 or newer**.
 
 ```sh
-go get github.com/soulteary/memfs-kit
+go get github.com/soulteary/memfs-kit@v1.1.1
 ```
 
 The module is `github.com/soulteary/memfs-kit`; the Go package name is `memfs`.
@@ -84,11 +90,11 @@ func main() {
 | `(*FS).Stat(path)` | Read metadata with the same hook behavior as `Open` |
 | `(*FS).ReadDir(path)` | Return a sorted, independent directory-entry snapshot |
 | `(*FS).Sub(dir)` | Return an `fs.FS` view of an existing subtree |
-| `WithOpenHook(fn)` | Transform file content or provide a virtual file for an individual open |
+| `WithOpenHook(fn)` | Customize regular or virtual file content and metadata |
 
 `*FS` implements `fs.FS`, `fs.StatFS`, `fs.ReadDirFS`, and `fs.SubFS`. Use standard
 helpers such as `fs.ReadFile`, `fs.ReadDir`, `fs.Stat`, `fs.WalkDir`, and `fs.Glob` with it.
-`fs.Stat` and `fs.ReadDir` automatically dispatch to the new optional methods.
+`fs.Stat` and `fs.ReadDir` automatically dispatch to these optional methods.
 Regular file handles implement `fs.File`, `io.Seeker`, and `io.ReaderAt`.
 Directory handles implement `fs.ReadDirFile`.
 
@@ -111,7 +117,9 @@ Directory handles implement `fs.ReadDirFile`.
 - **Directories:** an open directory contains a sorted snapshot of its
   entries. Repeated `ReadDir(n)` calls advance correctly, including EOF
   behavior for positive `n`. Changes made after the open appear on a new
-  open, not in the existing snapshot.
+  open, not in the existing snapshot. Entries without a regular-file hook use
+  metadata captured at directory open; `Info` returns that immutable snapshot
+  directly. Returned metadata remains usable after the directory closes.
 - **Subtrees:** `Sub` shares the underlying tree. Later writes through the
   original filesystem are visible to later opens in the subtree. Its root
   is named `.` and it retains the original open hook.
@@ -133,14 +141,18 @@ Directory handles implement `fs.ReadDirFile`.
 func(path string, existingContent []byte, origErr error) ([]byte, error)
 ```
 
-The callback runs when opening regular files and missing paths. For a missing path,
-`existingContent` is `nil` and `origErr` matches `fs.ErrNotExist`. Returning
-bytes and a `nil` error supplies content for that open; returning
-`existingContent, origErr` preserves normal behavior.
+The callback runs for `Open` and `FS.Stat` on regular files and missing paths.
+For a missing path, `existingContent` is `nil` and `origErr` matches
+`fs.ErrNotExist`. Returning
+bytes and a `nil` error supplies content for the operation, with metadata
+describing that content; returning `existingContent, origErr` preserves normal
+behavior.
 
 For a regular file in a directory listing, its `DirEntry.Info()` also runs the
 hook on first use. It uses the file snapshot captured when the directory was
-opened and caches the resulting metadata or error for that entry. This keeps
+opened and caches the resulting metadata or error for that entry, including
+across concurrent calls. If the hook panics, later calls on that entry re-panic
+with the same value without running the hook again. This keeps
 the reported size and modification time consistent with transformed content,
 including when a stable hook is consumed by archive writers. Opening a
 directory, reading its entries, and calling `Name`, `Type`, or `IsDir` do not
@@ -154,7 +166,7 @@ the callback cannot mutate stored file data by changing its input slice.
 Different entries, opens, and `FS.Stat` calls may invoke the hook concurrently.
 Do not recursively call the same entry's `Info()` from its hook:
 that entry waits for its first metadata calculation to complete. Likewise,
-recursively opening the same path requires a stopping rule.
+recursively calling `Open` or `FS.Stat` on the same path requires a stopping rule.
 
 Content returned by a hook is not written back to the tree. A synthesized
 file uses mode `0444`, does not appear in directory listings, and cannot
@@ -166,9 +178,9 @@ file's stale modification time to return an incorrect `304 Not Modified`.
 Returning unchanged content preserves the original metadata. Synthesized
 files also have an unknown modification time.
 
-An entry's first `Info()` call observes the hook's state at that call; later
-calls reuse its cached result. Each `Open` or `FS.Stat` on a regular or missing
-path invokes the hook again. On an open file handle, `File.Stat` returns the
+For a regular-file entry with a hook, the first `Info()` call observes the
+hook's state at that call; later calls reuse its cached result. Each `Open` or
+`FS.Stat` on a regular or missing path invokes the hook again. On an open file handle, `File.Stat` returns the
 captured metadata without invoking the hook. Consumers that compare metadata
 with a separate open, such as archive writers, need a hook whose output remains
 stable across those operations.
@@ -218,8 +230,8 @@ gofmt -w .
 go vet ./...
 go test ./...
 go test -race -coverprofile=coverage.out ./...
-go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
-go test -run='^$' -bench=. -benchmem -count=5 .
+go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s -parallel=2 -timeout=2m .
+go test -run='^$' -bench=. -benchmem -benchtime=200ms -count=6 -cpu=1 .
 ```
 
 See [performance notes](docs/PERFORMANCE.md) for the optimization scope,

@@ -9,6 +9,8 @@ Release notes live in `.github/releases/v<version>.md`. For example, version
 Choose the next version for the public API changes. For example, v1.1.0 adds
 the `Stat` and `ReadDir` methods and their standard optional interfaces, so it
 is a minor release. The Go module path stays `github.com/soulteary/memfs-kit`.
+Performance changes that preserve the existing API and behavior use a patch
+version, such as v1.1.1.
 
 Update `VERSION` and create its matching release-notes file. Describe new
 capabilities, compatibility considerations, requirements, and validation. Update
@@ -26,6 +28,8 @@ Merging the release-preparation pull request to `main` is the publication
 trigger. The Release workflow runs after the main-branch CI workflow completes
 successfully. Pull-request CI never publishes a release. A preparation request
 can stop at the reviewed pull request; merge only when ready to publish.
+Only successful CI for a push to the default branch triggers publication;
+manually dispatching CI refreshes reports but does not publish a version.
 
 The publisher checks that the default branch still matches the tested source.
 It also accepts one direct report-only commit from `github-actions[bot]`, so
@@ -47,3 +51,17 @@ This project is a Go library. GitHub's source archives and the Go module tag
 are its release artifacts; no application binaries are built. Keep `LICENSE`,
 `LICENSES/memfs-BSD-3-Clause.txt`, and `THIRD_PARTY_NOTICES.md` in the released
 source. The v1 module path remains `github.com/soulteary/memfs-kit`.
+
+## Verify publication
+
+A successful Release workflow can have skipped publication because the default
+branch advanced or the release already exists. Verify the actual public Release
+and tag before announcing completion:
+
+- The requested tag is published as a stable, non-draft Release and is latest.
+- Peel the tag to its commit. It must be the successful main push CI source or
+  its permitted report-only bot child, as described above.
+- Read `VERSION`, `go.mod` and the release-notes file from that tag. The version,
+  installation command and published release body must agree.
+- Confirm that the Go module can be downloaded by its versioned module path.
+  A newly published version can take time to appear on the public proxy.

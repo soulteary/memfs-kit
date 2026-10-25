@@ -14,25 +14,30 @@
 `http.FileServer(http.FS(root))`。文件系统拥有独立的数据副本，支持并发操作，
 每次打开文件都会获得独立、支持定位读取的快照。运行和测试均不依赖第三方 Go 库。
 
-## v1.1.0
+## v1.1.1
 
-v1.1.0 包含四项性能优化：
+本补丁版继续优化小块读取和目录条目元数据：
 
-- `FS.Stat` 只查询一次文件树，读取目录元数据时不再构造目录列表。
-- hook 原样返回内容时复用不可变文件数据；只取元数据时省去随后丢弃的内容副本。
-- 路径遍历和文件读取器减少内存分配。
-- 打开目录时只为需要 hook 的条目构造子路径，`FS.ReadDir` 省去重复的切片复制和排序。
+- `File.Read` 保留原有句柄同步保护，减少每次读取的额外开销。
+- 没有普通文件 hook 的条目，`Info` 直接返回已有的不可变元数据快照，
+  不再为每次调用额外分配副本。
 
-快照所有权、hook 行为和并发保证保持不变。环境要求仍为 Go 1.27.3 或更新版本，
-不引入第三方依赖。具体变化和测量结果见
-[v1.1.0 发布说明](.github/releases/v1.1.0.md)与[性能说明](docs/PERFORMANCE.md)。
+与 v1.1.0 的本地六轮配对基准相比，按 64 B 分块读完 4 KiB 文件的耗时下降
+**16.7%**；遍历 1,000 项目录并逐项调用 `Info` 的耗时下降 **26.9%**，
+分配内存减少 **44.3%**。带 hook 的目录场景基本持平。这些结果针对具体微基准，
+不代表应用整体吞吐量。
+
+现有 API、快照所有权、hook 行为和并发保证保持不变。测量条件与剩余开销见
+[v1.1.1 发布说明](.github/releases/v1.1.1.md)和
+[性能说明](docs/PERFORMANCE.md#v111-small-reads-and-entry-metadata)。此前的可选接口
+与内存分配优化见 [v1.1.0 发布说明](.github/releases/v1.1.0.md)。
 
 ## 环境与安装
 
 需要 **Go 1.27.3 或更新版本**。
 
 ```sh
-go get github.com/soulteary/memfs-kit
+go get github.com/soulteary/memfs-kit@v1.1.1
 ```
 
 模块路径是 `github.com/soulteary/memfs-kit`，Go 包名保留为 `memfs`。
@@ -82,11 +87,11 @@ func main() {
 | `(*FS).Stat(path)` | 获取元数据，保留与 `Open` 一致的 hook 行为 |
 | `(*FS).ReadDir(path)` | 返回排序后的独立目录条目快照 |
 | `(*FS).Sub(dir)` | 返回现有子目录的 `fs.FS` 视图 |
-| `WithOpenHook(fn)` | 为单次打开转换内容，或提供虚拟文件内容 |
+| `WithOpenHook(fn)` | 自定义普通文件或虚拟文件的内容与元数据 |
 
 `*FS` 实现 `fs.FS`、`fs.StatFS`、`fs.ReadDirFS` 和 `fs.SubFS`，可以直接配合
 `fs.ReadFile`、`fs.ReadDir`、`fs.Stat`、`fs.WalkDir`、`fs.Glob` 等标准库函数使用。
-`fs.Stat` 和 `fs.ReadDir` 会自动调用新增的可选接口方法。普通文件句柄实现
+`fs.Stat` 和 `fs.ReadDir` 会自动调用这些可选接口方法。普通文件句柄实现
 `fs.File`、`io.Seeker` 和 `io.ReaderAt`，目录句柄实现 `fs.ReadDirFile`。
 
 ## 行为与边界
@@ -103,6 +108,8 @@ func main() {
   已打开句柄仍保留各自的引用。关闭后的句柄操作返回 `fs.ErrClosed`。
 - **目录快照**：打开目录时固定其条目并按名称排序；连续调用 `ReadDir(n)` 可以正确分页，
   正数 `n` 的 EOF 语义遵循标准库。目录打开后发生的变化需要重新打开才能看到。
+  没有普通文件 hook 的条目在打开目录时就固定元数据，`Info` 直接返回该不可变快照；
+  已返回的元数据在目录关闭后仍可使用。
 - **子目录**：`Sub` 共享原文件树，父文件系统的后续写入会被子目录的后续打开操作看到。
   子目录视图的根名为 `.`，并继承原来的打开 hook。
 - **并发**：文件系统方法和单个句柄的方法均有同步保护。共享句柄也会共享读指针，
@@ -120,12 +127,13 @@ func main() {
 func(path string, existingContent []byte, origErr error) ([]byte, error)
 ```
 
-打开普通文件或不存在的路径时会执行回调。路径不存在时，`existingContent` 为 `nil`，
-`origErr` 可以通过 `errors.Is(origErr, fs.ErrNotExist)` 判断。返回字节内容和 `nil`
-错误，即为本次打开提供内容；返回 `existingContent, origErr` 则保留默认行为。
+对普通文件或不存在的路径调用 `Open`、`FS.Stat` 时会执行回调。路径不存在时，
+`existingContent` 为 `nil`，`origErr` 可以通过 `errors.Is(origErr, fs.ErrNotExist)` 判断。返回字节内容和 `nil`
+错误，即为本次操作提供内容，并据此计算元数据；返回 `existingContent, origErr` 则保留默认行为。
 
 目录列表中普通文件的 `DirEntry.Info()` 也会在首次调用时执行 hook。它以打开目录时
-捕获的文件快照为输入，并缓存该条目的元数据结果或错误，使大小和修改时间反映转换后的
+捕获的文件快照为输入，并缓存该条目的元数据结果或错误，包括并发调用。如果 hook
+触发 panic，后续调用会重新抛出同一个值，不再执行 hook。元数据的大小和修改时间反映转换后的
 内容，支持归档写入等需要先取元数据再读文件的场景。打开目录、读取目录条目，以及调用
 `Name`、`Type`、`IsDir` 都不会执行 hook。
 
@@ -134,7 +142,7 @@ func(path string, existingContent []byte, origErr error) ([]byte, error)
 保持隔离，修改这些切片不会改变底层文件或已打开的内容。不同条目、打开操作和 `FS.Stat`
 调用可能并发执行 hook；不要在某个条目的 hook 中递归调用该条目自己的 `Info()`，
 否则会等待自身尚未完成的首次计算。
-递归打开同一路径也需要明确的终止条件。
+对同一路径递归调用 `Open` 或 `FS.Stat` 也需要明确的终止条件。
 
 hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` 权限元数据，不出现在目录列表里，
 也不能为 `Sub` 创建虚拟目录。
@@ -143,8 +151,8 @@ hook 返回的内容不会写回文件树。临时合成的文件使用 `0444` �
 避免 `http.FileServer` 依据底层文件已经失效的修改时间，错误返回 `304 Not Modified`。
 原样返回内容时保留原来的元数据；临时合成文件的修改时间也为零。
 
-条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果。对普通文件或不存在
-路径的每次 `Open`、`FS.Stat` 都会重新执行 hook；已打开文件句柄的 `File.Stat` 只返回捕获的
+带有 hook 的普通文件条目首次调用 `Info()` 时读取当时的 hook 状态，后续调用复用缓存结果。
+对普通文件或不存在路径的每次 `Open`、`FS.Stat` 都会重新执行 hook；已打开文件句柄的 `File.Stat` 只返回捕获的
 元数据，不会再次执行 hook。归档写入等需要比较元数据与另一次打开结果的消费者，要求 hook
 在这些操作之间提供稳定的输出。
 
@@ -184,8 +192,8 @@ gofmt -w .
 go vet ./...
 go test ./...
 go test -race -coverprofile=coverage.out ./...
-go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
-go test -run='^$' -bench=. -benchmem -count=5 .
+go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s -parallel=2 -timeout=2m .
+go test -run='^$' -bench=. -benchmem -benchtime=200ms -count=6 -cpu=1 .
 ```
 
 优化范围、可复现的基准对比，以及包装文件系统时的可选接口行为，见[性能说明](docs/PERFORMANCE.md)。
