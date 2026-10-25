@@ -1,11 +1,11 @@
 # Go Report Card
 
-**Grade: A+** (94.6%)
+**Grade: A+** (94.1%)
 
 | Metric | Value |
 | ------ | ----- |
-| Files | 13 |
-| Issues | 6 |
+| Files | 14 |
+| Issues | 7 |
 
 ## Checks
 
@@ -13,7 +13,7 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 53% |
+| gocyclo | 50% |
 | ineffassign | 100% |
 | license | 100% |
 | misspell | 92% |
@@ -22,12 +22,17 @@
 
 ### gocyclo
 
+- `hook_errors_test.go`
+  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 - `fuzz_test.go`
   - Line 16: cyclomatic complexity 16 for function FuzzPathValidation
 - `fastpaths_test.go`
   - Line 73: cyclomatic complexity 44 for function TestFastPathsMatchOpenFallback
   - Line 201: cyclomatic complexity 22 for function TestFastReadDirIndependentLazySnapshots
   - Line 285: cyclomatic complexity 19 for function TestFastPathHooksCanWriteFilesystem
+- `read_info_test.go`
+  - Line 95: cyclomatic complexity 32 for function TestConcurrentSmallReadsConsumeEachByteOnce
+  - Line 184: cyclomatic complexity 29 for function TestDirectoryEntryMetadataSnapshots
 - `regression_test.go`
   - Line 193: cyclomatic complexity 21 for function TestSeekReadAtAndClosedFile
   - Line 344: cyclomatic complexity 20 for function TestOpenHookMissingFilesAndErrors
@@ -37,8 +42,6 @@
   - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
 - `memfs_test.go`
   - Line 37: cyclomatic complexity 16 for function TestMemFS
-- `hook_errors_test.go`
-  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 
 ### misspell
 
