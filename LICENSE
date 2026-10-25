@@ -199,3 +199,13 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+Third-party licensing notice
+---------------------------
+
+This project contains code derived from memfs, originally published under
+BSD-3-Clause. Its original copyright notice, license conditions, and disclaimer
+remain applicable to that code. The complete original license is provided in
+LICENSES/memfs-BSD-3-Clause.txt. See THIRD_PARTY_NOTICES.md for source revisions
+and attribution.
