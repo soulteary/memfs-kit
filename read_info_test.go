@@ -205,69 +205,71 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			entries, err := fs.ReadDir(root, ".")
-			if err != nil {
-				t.Fatal(err)
-			}
-			calls.Store(0)
-			oldFile, oldDir := findHookTestEntry(t, entries, "file"), findHookTestEntry(t, entries, "dir")
-			mustWrite(t, root, "file", "replacement is longer")
-			// Consecutive time.Now calls can be equal on Windows. Ensure the
-			// next write can give the directory a distinct timestamp before
-			// checking that its already-captured metadata remains unchanged.
-			for attempts := 0; !time.Now().After(beforeDir.ModTime()); attempts++ {
-				if attempts == 1000 {
-					t.Fatal("clock did not advance beyond the captured directory timestamp")
+			heldFile, heldDir := func() (fs.FileInfo, fs.FileInfo) {
+				entries, err := fs.ReadDir(root, ".")
+				if err != nil {
+					t.Fatal(err)
 				}
-				time.Sleep(time.Millisecond)
-			}
-			mustWrite(t, root, "dir/new-child", "changes the directory timestamp")
-			currentDir, err := fs.Stat(root, "dir")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if currentDir.ModTime().Equal(beforeDir.ModTime()) {
-				t.Fatal("creating a directory child did not change its modification time")
-			}
-			for range 8 {
-				for _, pair := range []struct {
-					entry fs.DirEntry
-					want  fs.FileInfo
-				}{{oldFile, beforeFile}, {oldDir, beforeDir}} {
-					info, err := pair.entry.Info()
-					if err != nil {
-						t.Fatal(err)
+				calls.Store(0)
+				oldFile, oldDir := findHookTestEntry(t, entries, "file"), findHookTestEntry(t, entries, "dir")
+				mustWrite(t, root, "file", "replacement is longer")
+				// Consecutive time.Now calls can be equal on Windows. Ensure the
+				// next write can give the directory a distinct timestamp before
+				// checking that its already-captured metadata remains unchanged.
+				for attempts := 0; !time.Now().After(beforeDir.ModTime()); attempts++ {
+					if attempts == 1000 {
+						t.Fatal("clock did not advance beyond the captured directory timestamp")
 					}
-					compareFastPathInfo(t, info, pair.want)
+					time.Sleep(time.Millisecond)
 				}
-			}
-			wantCalls := int32(0)
-			if hooked {
-				wantCalls = 1
-			}
-			if got := calls.Load(); got != wantCalls {
-				t.Fatalf("repeated file/directory Info invoked hooks %d times, want %d", got, wantCalls)
-			}
-			fresh, err := fs.ReadDir(root, ".")
-			if err != nil {
-				t.Fatal(err)
-			}
-			freshDir, err := findHookTestEntry(t, fresh, "dir").Info()
-			if err != nil {
-				t.Fatal(err)
-			}
-			compareFastPathInfo(t, freshDir, currentDir)
-			// Holding just FileInfo must keep its immutable metadata usable even
-			// after entry slices are discarded and the current tree changes again.
-			heldFile, err := oldFile.Info()
-			if err != nil {
-				t.Fatal(err)
-			}
-			heldDir, err := oldDir.Info()
-			if err != nil {
-				t.Fatal(err)
-			}
-			oldFile, oldDir, entries, fresh = nil, nil, nil, nil
+				mustWrite(t, root, "dir/new-child", "changes the directory timestamp")
+				currentDir, err := fs.Stat(root, "dir")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if currentDir.ModTime().Equal(beforeDir.ModTime()) {
+					t.Fatal("creating a directory child did not change its modification time")
+				}
+				for range 8 {
+					for _, pair := range []struct {
+						entry fs.DirEntry
+						want  fs.FileInfo
+					}{{oldFile, beforeFile}, {oldDir, beforeDir}} {
+						info, err := pair.entry.Info()
+						if err != nil {
+							t.Fatal(err)
+						}
+						compareFastPathInfo(t, info, pair.want)
+					}
+				}
+				wantCalls := int32(0)
+				if hooked {
+					wantCalls = 1
+				}
+				if got := calls.Load(); got != wantCalls {
+					t.Fatalf("repeated file/directory Info invoked hooks %d times, want %d", got, wantCalls)
+				}
+				fresh, err := fs.ReadDir(root, ".")
+				if err != nil {
+					t.Fatal(err)
+				}
+				freshDir, err := findHookTestEntry(t, fresh, "dir").Info()
+				if err != nil {
+					t.Fatal(err)
+				}
+				compareFastPathInfo(t, freshDir, currentDir)
+				// Holding just FileInfo must keep its immutable metadata usable even
+				// after entry slices are discarded and the current tree changes again.
+				heldFile, err := oldFile.Info()
+				if err != nil {
+					t.Fatal(err)
+				}
+				heldDir, err := oldDir.Info()
+				if err != nil {
+					t.Fatal(err)
+				}
+				return heldFile, heldDir
+			}()
 			mustWrite(t, root, "file", "another replacement")
 			mustWrite(t, root, "dir/another-child", "another directory timestamp change")
 			runtime.GC()
