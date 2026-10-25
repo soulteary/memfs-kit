@@ -1,7 +1,10 @@
 # memfs-kit
 
-[![CI](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml)
+[![CI](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/soulteary/memfs-kit/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/memfs-kit.svg)](https://pkg.go.dev/github.com/soulteary/memfs-kit)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go Test Coverage](./.github/coverage.svg)](./.github/go-test-report.md)
+[![Go Report Card](./.github/goreportcard.svg)](./.github/goreportcard-report.md)
 
 [中文文档](README_CN.md)
 
@@ -197,8 +200,18 @@ go test -run='^$' -fuzz='^FuzzPathValidation$' -fuzztime=15s .
 
 CI checks formatting, module consistency, and `go vet`; runs tests on Linux,
 macOS, and Windows; and runs race detection, coverage reporting, and a short
-fuzzing pass on Linux. GitHub Actions are pinned to verified commit SHAs and
+fuzzing pass on Linux. [Go Test Report](https://github.com/soulteary/go-test-report-action)
+generates the test and coverage reports, and
+[Go Report Card](https://github.com/soulteary/goreportcard-action) generates the
+code quality report. GitHub Actions are pinned to verified commit SHAs and
 updated by Dependabot.
+
+Successful CI runs for pushes to `main`, or manual runs selected on `main`,
+refresh the reports and badges. A separate publishing job writes only the five
+report files, after every required job succeeds and only while the tested source
+still matches the default branch's HEAD. Pull requests generate report artifacts
+without writing to the repository. See the [Go report policy](.github/GO-REPORTS.md)
+for triggers, artifacts, and publishing rules.
 
 ## License
 
