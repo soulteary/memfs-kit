@@ -12,6 +12,8 @@ CI workflow so successful changes to `main` update the README badges.
   badge. Coverage reporting reuses that run's profile without repeating tests.
   Toolchain auto-selection is allowed while the Action bootstraps its CLI; it
   then selects the project's `go.mod` before running tests.
+  The CLI is built from the pinned v1.1.2 source because that release's binary
+  installer fails in its cleanup trap after downloading successfully.
 - The existing formatting, module consistency, `go vet`, Linux/macOS/Windows
   tests, and bounded path fuzzing remain enabled. Fuzzing runs before Go Report
   Card, using the project's selected Go toolchain.

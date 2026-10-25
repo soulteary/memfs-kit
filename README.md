@@ -213,6 +213,8 @@ still matches the default branch's HEAD. Pull requests generate report artifacts
 without writing to the repository. See the [Go report policy](.github/GO-REPORTS.md)
 for triggers, artifacts, and publishing rules.
 
+For version tags and GitHub Releases, see the [release process](.github/RELEASING.md).
+
 ## License
 
 The project uses [Apache License 2.0](LICENSE). Code inherited from `memfs`

@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish a version after successful main CI
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out the tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Publish only the current tested version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import urllib.parse
+
+          repository = os.environ["REPOSITORY"]
+          tested = os.environ["TESTED_SHA"]
+          branch = os.environ["DEFAULT_BRANCH"]
+
+          def summary(message):
+              print(message)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+                  output.write(message + "\n")
+
+          def git(*arguments):
+              return subprocess.check_output(["git", *arguments], text=True).strip()
+
+          def api(path, payload=None, missing_ok=False):
+              command = ["gh", "api", "--include", "--method", "POST" if payload is not None else "GET",
+                         "-H", "X-GitHub-Api-Version: 2022-11-28", path]
+              if payload is not None:
+                  command.extend(["--input", "-"])
+              result = subprocess.run(command, input=json.dumps(payload) if payload is not None else None,
+                                      text=True, capture_output=True, check=False)
+              header, separator, body = result.stdout.partition("\n\n")
+              status = re.match(r"HTTP/\S+ (\d{3})(?:\s|$)", header)
+              code = int(status.group(1)) if status else None
+              if code == 404 and missing_ok:
+                  return None
+              if result.returncode != 0 or code is None or not 200 <= code < 300 or not separator:
+                  raise RuntimeError(f"GitHub API request failed for {path}: {result.stderr.strip()} (HTTP {code})")
+              return json.loads(body)
+
+          # Only the exact tested commit, or its report-only bot child, is eligible.
+          git("fetch", "origin", branch)
+          source = git("rev-parse", "FETCH_HEAD")
+          reports = {
+              ".github/go-test-report.md", ".github/go-test-report.json", ".github/coverage.svg",
+              ".github/goreportcard.svg", ".github/goreportcard-report.md",
+          }
+          if source != tested:
+              parents = git("show", "-s", "--format=%P", source).split()
+              author = git("show", "-s", "--format=%an", source)
+              email = git("show", "-s", "--format=%ae", source)
+              changed = set(git("diff", "--name-only", "-z", tested, source).rstrip("\0").split("\0"))
+              if (parents != [tested] or author != "github-actions[bot]"
+                      or email != "41898282+github-actions[bot]@users.noreply.github.com"
+                      or not changed or not changed <= reports):
+                  summary("The default branch advanced beyond the tested source; this release run is skipped.")
+                  raise SystemExit(0)
+          git("checkout", "--detach", source)
+
+          version_file = pathlib.Path("VERSION")
+          if version_file.is_symlink() or not version_file.is_file():
+              raise RuntimeError("VERSION must be a regular file")
+          version = version_file.read_text(encoding="utf-8").strip()
+          if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+              raise RuntimeError("VERSION must contain x.y.z without a v prefix or leading zeroes")
+          tag = "v" + version
+
+          # An existing published release or draft belongs to its original author.
+          # Listing is needed because GET /releases/tags does not identify drafts.
+          page = 1
+          while True:
+              releases = api(f"repos/{repository}/releases?per_page=100&page={page}")
+              existing = next((release for release in releases if release["tag_name"] == tag), None)
+              if existing:
+                  state = "draft" if existing["draft"] else "published"
+                  summary(f"Release {tag} already exists ({state}); leaving it unchanged.")
+                  raise SystemExit(0)
+              if len(releases) < 100:
+                  break
+              page += 1
+
+          notes = pathlib.Path(".github/releases") / (tag + ".md")
+          if (pathlib.Path(".github").is_symlink() or notes.parent.is_symlink()
+                  or notes.is_symlink() or not notes.is_file() or not notes.read_text(encoding="utf-8").strip()):
+              raise RuntimeError(f"Release notes must be a nonempty regular file: {notes}")
+
+          encoded_branch = urllib.parse.quote(branch, safe="")
+          current = api(f"repos/{repository}/git/ref/heads/{encoded_branch}")
+          if current["object"]["sha"] != source:
+              summary("The default branch advanced before publication; this release run is skipped.")
+              raise SystemExit(0)
+
+          existing_tag = api(f"repos/{repository}/git/ref/tags/{tag}", missing_ok=True)
+          if existing_tag is not None:
+              target = existing_tag["object"]
+              seen = set()
+              while target["type"] == "tag":
+                  if target["sha"] in seen:
+                      raise RuntimeError("Annotated tag cycle detected")
+                  seen.add(target["sha"])
+                  target = api(f"repos/{repository}/git/tags/{target['sha']}")["object"]
+              if target["type"] != "commit" or target["sha"] != source:
+                  raise RuntimeError(f"Existing tag {tag} does not match the tested release source; refusing to move it")
+          else:
+              api(f"repos/{repository}/git/refs", {"ref": "refs/tags/" + tag, "sha": source})
+
+          subprocess.run(["gh", "release", "create", tag, "--repo", repository,
+                          "--verify-tag", "--latest", "--title", "memfs-kit " + tag,
+                          "--notes-file", str(notes)], check=True)
+          summary(f"Published [{tag}](https://github.com/{repository}/releases/tag/{tag}) from `{source}`.")
+          PY

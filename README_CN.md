@@ -177,6 +177,8 @@ GitHub Actions 固定到经过核实的提交 SHA，由 Dependabot 跟踪更新�
 PR 只生成报告 artifact，不向仓库写入文件。触发条件、artifact 和发布规则见
 [Go 报告策略](.github/GO-REPORTS.md)。
 
+版本标签与 GitHub Release 的发布方式见[发布流程](.github/RELEASING.md)。
+
 ## 许可证
 
 项目采用 [Apache License 2.0](LICENSE)。继承自 `memfs` 的代码保留原
