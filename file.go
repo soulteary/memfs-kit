@@ -46,11 +46,13 @@ func (f *File) Stat() (fs.FileInfo, error) {
 // Read reads from the handle's current position.
 func (f *File) Read(p []byte) (int, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.closed {
+		f.mu.Unlock()
 		return 0, pathError("read", f.path, fs.ErrClosed)
 	}
-	return f.reader.Read(p)
+	n, err := f.reader.Read(p)
+	f.mu.Unlock()
+	return n, err
 }
 
 // ReadAt reads at offset without changing the handle's current position.
@@ -161,33 +163,38 @@ func (i fileInfo) ModTime() time.Time { return i.modTime }
 func (i fileInfo) IsDir() bool        { return i.mode.IsDir() }
 func (i fileInfo) Sys() any           { return nil }
 
-type dirEntry struct {
+type hookDirEntry struct {
 	info   fileInfo
 	infoFn func() (fs.FileInfo, error)
 }
 
+// plainDirEntry owns immutable metadata. Returning its address from Info avoids
+// allocating another interface copy for every call, without retaining a node.
+type plainDirEntry struct {
+	fileInfo
+}
+
+func (d *plainDirEntry) Type() fs.FileMode          { return d.mode.Type() }
+func (d *plainDirEntry) Info() (fs.FileInfo, error) { return &d.fileInfo, nil }
+
 // newDirEntry captures only the immutable file snapshot, not its parent tree.
 // Metadata is lazy: listing names does not execute application callbacks.
-func newDirEntry(name, hookName string, info fileInfo, data []byte, hook openHook) dirEntry {
-	entry := dirEntry{info: info}
-	if hook != nil && !info.IsDir() {
-		entry.infoFn = sync.OnceValues(func() (fs.FileInfo, error) {
-			resolved, _, err := applyOpenHook(hook, name, hookName, info, data, nil, false)
-			if err != nil {
-				return nil, err
-			}
-			return resolved, nil
-		})
+func newDirEntry(name, hookName string, info fileInfo, data []byte, hook openHook) fs.DirEntry {
+	if hook == nil || info.IsDir() {
+		return &plainDirEntry{fileInfo: info}
 	}
+	entry := hookDirEntry{info: info}
+	entry.infoFn = sync.OnceValues(func() (fs.FileInfo, error) {
+		resolved, _, err := applyOpenHook(hook, name, hookName, info, data, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		return resolved, nil
+	})
 	return entry
 }
 
-func (d dirEntry) Name() string      { return d.info.Name() }
-func (d dirEntry) IsDir() bool       { return d.info.IsDir() }
-func (d dirEntry) Type() fs.FileMode { return d.info.Mode().Type() }
-func (d dirEntry) Info() (fs.FileInfo, error) {
-	if d.infoFn != nil {
-		return d.infoFn()
-	}
-	return d.info, nil
-}
+func (d hookDirEntry) Name() string               { return d.info.Name() }
+func (d hookDirEntry) IsDir() bool                { return d.info.IsDir() }
+func (d hookDirEntry) Type() fs.FileMode          { return d.info.Mode().Type() }
+func (d hookDirEntry) Info() (fs.FileInfo, error) { return d.infoFn() }

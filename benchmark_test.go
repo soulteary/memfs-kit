@@ -5,6 +5,7 @@ package memfs_test
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 	"testing"
@@ -35,9 +36,9 @@ func benchmarkFileFS(b *testing.B, depth, size int, opts ...memfs.Option) (*memf
 	return fsys, name
 }
 
-func benchmarkDirectoryFS(b *testing.B, count int) *memfs.FS {
+func benchmarkDirectoryFS(b *testing.B, count int, opts ...memfs.Option) *memfs.FS {
 	b.Helper()
-	fsys := memfs.New()
+	fsys := memfs.New(opts...)
 	if err := fsys.MkdirAll("dir", 0o755); err != nil {
 		b.Fatal(err)
 	}
@@ -246,5 +247,156 @@ func BenchmarkWriteFileExistingDepth12(b *testing.B) {
 		if err := fsys.WriteFile(name, data, 0o644); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+var benchmarkResult int64
+
+func BenchmarkSmallChunkRead(b *testing.B) {
+	const size = 4 << 10
+	for _, chunk := range []int{16, 64, 256, 4096} {
+		b.Run(fmt.Sprintf("4KiB/Chunk%dB", chunk), func(b *testing.B) {
+			fsys := memfs.New()
+			data := make([]byte, size)
+			for i := range data {
+				data[i] = byte(i*31 + 7)
+			}
+			if err := fsys.WriteFile("file", data, 0o644); err != nil {
+				b.Fatal(err)
+			}
+			buffer := make([]byte, chunk)
+			var wantChecksum int64
+			for offset := 0; offset < len(data); offset += chunk {
+				end := min(offset+chunk, len(data))
+				wantChecksum += int64(data[offset]) + int64(data[end-1])
+			}
+			b.SetBytes(size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			var total int
+			var checksum int64
+			for i := 0; i < b.N; i++ {
+				file, err := fsys.Open("file")
+				if err != nil {
+					b.Fatal(err)
+				}
+				total, checksum = 0, 0
+				for {
+					n, err := file.Read(buffer)
+					if n > 0 {
+						total += n
+						checksum += int64(buffer[0]) + int64(buffer[n-1])
+					}
+					if err != nil {
+						if err != io.EOF {
+							b.Fatal(err)
+						}
+						break
+					}
+				}
+				if err := file.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if total != size || checksum != wantChecksum {
+				b.Fatalf("read = %d bytes, checksum %d; want %d bytes, checksum %d", total, checksum, size, wantChecksum)
+			}
+			benchmarkResult = int64(total) + checksum
+		})
+	}
+}
+
+func benchmarkReadDirAllInfo(b *testing.B, fsys fs.FS, count int) {
+	b.Helper()
+	b.ReportAllocs()
+	b.ResetTimer()
+	var entries []fs.DirEntry
+	var totalSize int64
+	var err error
+	for i := 0; i < b.N; i++ {
+		entries, err = fs.ReadDir(fsys, "dir")
+		if err != nil {
+			b.Fatal(err)
+		}
+		totalSize = 0
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				b.Fatal(err)
+			}
+			totalSize += info.Size()
+		}
+	}
+	b.StopTimer()
+	if len(entries) != count || totalSize != int64(5*count) {
+		b.Fatalf("listing metadata = %d entries, %d bytes; want %d entries, %d bytes", len(entries), totalSize, count, 5*count)
+	}
+	for i, entry := range entries {
+		if want := fmt.Sprintf("f%05d", i); entry.Name() != want {
+			b.Fatalf("entry %d = %q, want %q", i, entry.Name(), want)
+		}
+	}
+	benchmarkResult = int64(len(entries)) + totalSize
+}
+
+func BenchmarkReadDirInfo(b *testing.B) {
+	for _, count := range []int{100, 1000, 10000} {
+		b.Run(fmt.Sprintf("Entries%d", count), func(b *testing.B) {
+			benchmarkReadDirAllInfo(b, benchmarkDirectoryFS(b, count), count)
+		})
+	}
+}
+
+func BenchmarkHookReadDirAllInfo(b *testing.B) {
+	for _, hook := range benchmarkHookCases {
+		for _, count := range []int{100, 1000} {
+			b.Run(fmt.Sprintf("%s/Entries%d", hook.name, count), func(b *testing.B) {
+				fsys := benchmarkDirectoryFS(b, count, benchmarkHookOption(hook.transform))
+				// Each iteration obtains a fresh listing and resolves every entry.
+				benchmarkReadDirAllInfo(b, fsys, count)
+			})
+		}
+	}
+}
+
+func BenchmarkDirEntryInfoCached(b *testing.B) {
+	cases := []struct {
+		name string
+		opts []memfs.Option
+	}{
+		{name: "NoHook"},
+		{name: "Passthrough", opts: []memfs.Option{benchmarkHookOption(false)}},
+		{name: "Transform", opts: []memfs.Option{benchmarkHookOption(true)}},
+	}
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			fsys := benchmarkDirectoryFS(b, 1, c.opts...)
+			entries, err := fs.ReadDir(fsys, "dir")
+			if err != nil {
+				b.Fatal(err)
+			}
+			if len(entries) != 1 {
+				b.Fatalf("entry count = %d, want 1", len(entries))
+			}
+			entry := entries[0]
+			info, err := entry.Info() // Resolve lazy hook metadata before timing.
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				info, err = entry.Info()
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			if info.Size() != 5 {
+				b.Fatalf("entry size = %d, want 5", info.Size())
+			}
+			benchmarkResult = info.Size()
+		})
 	}
 }
