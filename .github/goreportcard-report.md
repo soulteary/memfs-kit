@@ -22,6 +22,11 @@
 
 ### gocyclo
 
+- `concurrency_views_test.go`
+  - Line 20: cyclomatic complexity 20 for function TestConcurrentParentAndSubtreeWrites
+  - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
+- `memfs_test.go`
+  - Line 37: cyclomatic complexity 16 for function TestMemFS
 - `hook_errors_test.go`
   - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
 - `fuzz_test.go`
@@ -37,11 +42,6 @@
   - Line 193: cyclomatic complexity 21 for function TestSeekReadAtAndClosedFile
   - Line 344: cyclomatic complexity 20 for function TestOpenHookMissingFilesAndErrors
   - Line 81: cyclomatic complexity 19 for function TestDirectoryPaginationSnapshot
-- `concurrency_views_test.go`
-  - Line 20: cyclomatic complexity 20 for function TestConcurrentParentAndSubtreeWrites
-  - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
-- `memfs_test.go`
-  - Line 37: cyclomatic complexity 16 for function TestMemFS
 
 ### misspell
 
