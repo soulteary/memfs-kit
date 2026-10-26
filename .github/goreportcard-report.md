@@ -22,6 +22,13 @@
 
 ### gocyclo
 
+- `read_info_test.go`
+  - Line 95: cyclomatic complexity 32 for function TestConcurrentSmallReadsConsumeEachByteOnce
+  - Line 184: cyclomatic complexity 29 for function TestDirectoryEntryMetadataSnapshots
+- `regression_test.go`
+  - Line 193: cyclomatic complexity 21 for function TestSeekReadAtAndClosedFile
+  - Line 344: cyclomatic complexity 20 for function TestOpenHookMissingFilesAndErrors
+  - Line 81: cyclomatic complexity 19 for function TestDirectoryPaginationSnapshot
 - `concurrency_views_test.go`
   - Line 20: cyclomatic complexity 20 for function TestConcurrentParentAndSubtreeWrites
   - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
@@ -35,13 +42,6 @@
   - Line 73: cyclomatic complexity 44 for function TestFastPathsMatchOpenFallback
   - Line 201: cyclomatic complexity 22 for function TestFastReadDirIndependentLazySnapshots
   - Line 285: cyclomatic complexity 19 for function TestFastPathHooksCanWriteFilesystem
-- `read_info_test.go`
-  - Line 95: cyclomatic complexity 32 for function TestConcurrentSmallReadsConsumeEachByteOnce
-  - Line 184: cyclomatic complexity 29 for function TestDirectoryEntryMetadataSnapshots
-- `regression_test.go`
-  - Line 193: cyclomatic complexity 21 for function TestSeekReadAtAndClosedFile
-  - Line 344: cyclomatic complexity 20 for function TestOpenHookMissingFilesAndErrors
-  - Line 81: cyclomatic complexity 19 for function TestDirectoryPaginationSnapshot
 
 ### misspell
 
