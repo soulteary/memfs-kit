@@ -44,20 +44,14 @@ func FuzzPathValidation(f *testing.F) {
 			return
 		}
 		if name == "." {
-			if err := fsys.MkdirAll(name, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, fsys.MkdirAll(name, 0o755))
 			if _, err := fsys.Sub(name); err != nil {
 				t.Fatal(err)
 			}
 			return
 		}
-		if err := fsys.MkdirAll(path.Dir(name), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := fsys.WriteFile(name, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		mustNoError(t, fsys.MkdirAll(path.Dir(name), 0o755))
+		mustNoError(t, fsys.WriteFile(name, content, 0o644))
 		got, err := fs.ReadFile(fsys, name)
 		if err != nil || !bytes.Equal(got, content) {
 			t.Fatalf("round trip %q: got %q, want %q, err=%v", name, got, content, err)

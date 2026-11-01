@@ -74,10 +74,6 @@ func TestFastPathsMatchOpenFallback(t *testing.T) {
 	for _, hooked := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hook=%t", hooked), func(t *testing.T) {
 			denied := errors.New("hook refused file")
-			type hookCall struct {
-				name, content string
-				missing       bool
-			}
 			var calls []hookCall
 			var original error
 			var opts []memfs.Option
@@ -103,22 +99,16 @@ func TestFastPathsMatchOpenFallback(t *testing.T) {
 			root := memfs.New(opts...)
 			for _, prefix := range []string{".", "assets/deep"} {
 				for _, dir := range []string{"dir", "empty"} {
-					if err := root.MkdirAll(path.Join(prefix, dir), 0o750); err != nil {
-						t.Fatal(err)
-					}
+					mustNoError(t, root.MkdirAll(path.Join(prefix, dir), 0o750))
 				}
 				for _, name := range []string{"stored", "passthrough", "transformed", "denied", "dir/z", "dir/a"} {
 					mustWrite(t, root, path.Join(prefix, name), "stored bytes")
 				}
 			}
 			assets, err := root.Sub("assets")
-			if err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, err)
 			nested, err := fs.Sub(assets, "deep")
-			if err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, err)
 			for _, view := range []struct {
 				name, prefix string
 				fsys         fs.FS
@@ -127,68 +117,7 @@ func TestFastPathsMatchOpenFallback(t *testing.T) {
 					for _, operation := range []string{"Stat", "ReadDir"} {
 						for _, name := range []string{".", "dir", "empty", "stored", "passthrough", "transformed", "virtual", "denied", "missing", "../escape", "stored/child"} {
 							t.Run(operation+"/"+name, func(t *testing.T) {
-								wantCalls := 0
-								if hooked && fs.ValidPath(name) && name != "." && name != "dir" && name != "empty" && name != "stored/child" {
-									wantCalls = 1
-								}
-								run := func(fsys fs.FS) (fs.FileInfo, []fs.DirEntry, error, []hookCall) {
-									calls, original = nil, nil
-									var info fs.FileInfo
-									var entries []fs.DirEntry
-									var err error
-									if operation == "Stat" {
-										info, err = fs.Stat(fsys, name)
-									} else {
-										entries, err = fs.ReadDir(fsys, name)
-									}
-									if hooked && name == "missing" && err != original {
-										t.Fatalf("pass-through hook replaced original missing error: got=%v, original=%v", err, original)
-									}
-									if len(calls) != wantCalls {
-										t.Fatalf("hook calls=%v, want %d", calls, wantCalls)
-									}
-									if wantCalls != 0 && calls[0].name != path.Join(view.prefix, name) {
-										t.Fatalf("hook path=%q, want %q", calls[0].name, path.Join(view.prefix, name))
-									}
-									return info, entries, err, append([]hookCall(nil), calls...)
-								}
-								gotInfo, gotEntries, gotErr, gotCalls := run(view.fsys)
-								wantInfo, wantEntries, wantErr, wantCallsLog := run(openOnlyFS{view.fsys})
-								compareFastPathError(t, gotErr, wantErr, denied)
-								if !reflect.DeepEqual(gotCalls, wantCallsLog) {
-									t.Fatalf("hook arguments differ: got=%v, want=%v", gotCalls, wantCallsLog)
-								}
-								if gotErr != nil {
-									return
-								}
-								if operation == "Stat" {
-									compareFastPathInfo(t, gotInfo, wantInfo)
-									return
-								}
-								if gotEntries == nil || wantEntries == nil || len(gotEntries) != len(wantEntries) {
-									t.Fatalf("directory result differs: got=%v, want=%v", gotEntries, wantEntries)
-								}
-								for i, entry := range gotEntries {
-									other := wantEntries[i]
-									if entry.Name() != other.Name() || entry.IsDir() != other.IsDir() || entry.Type() != other.Type() {
-										t.Fatalf("entry %d differs: got=%v, want=%v", i, entry, other)
-									}
-									if i > 0 && gotEntries[i-1].Name() >= entry.Name() {
-										t.Fatalf("directory is not sorted: %v", gotEntries)
-									}
-									calls = nil
-									gotInfo, gotErr := entry.Info()
-									gotCalls := append([]hookCall(nil), calls...)
-									calls = nil
-									wantInfo, wantErr := other.Info()
-									compareFastPathError(t, gotErr, wantErr, denied)
-									if !reflect.DeepEqual(gotCalls, calls) {
-										t.Fatalf("entry hook arguments differ: got=%v, want=%v", gotCalls, calls)
-									}
-									if gotErr == nil {
-										compareFastPathInfo(t, gotInfo, wantInfo)
-									}
-								}
+								checkFastPathOperation(t, hooked, name, operation, view.prefix, view.fsys, denied, &calls, &original)
 							})
 						}
 					}
@@ -220,9 +149,7 @@ func TestFastReadDirIndependentLazySnapshots(t *testing.T) {
 				}
 				list := func() []fs.DirEntry {
 					entries, err := fs.ReadDir(fsys, ".")
-					if err != nil {
-						t.Fatal(err)
-					}
+					mustNoError(t, err)
 					var names []string
 					for _, entry := range entries {
 						names = append(names, entry.Name())
@@ -240,32 +167,19 @@ func TestFastReadDirIndependentLazySnapshots(t *testing.T) {
 				if calls.Load() != 0 {
 					t.Fatal("directory listing invoked the hook")
 				}
-				if err := root.WriteFile("stored", []byte("replacement"), 0o777); err != nil {
-					t.Fatal(err)
-				}
-				checkInfo := func(entry fs.DirEntry, size int64) {
-					info, err := entry.Info()
-					if fail {
-						if !errors.Is(err, denied) {
-							t.Errorf("metadata error=%v, want %v", err, denied)
-						}
-						return
-					}
-					if err != nil || info.Size() != size || info.Mode() != 0o640 || !info.ModTime().IsZero() {
-						t.Errorf("snapshot metadata=%v, error=%v, want size=%d/mode=0640/zero timestamp", info, err, size)
-					}
-				}
+				mustNoError(t, root.WriteFile("stored", []byte("replacement"), 0o777))
+
 				var wg sync.WaitGroup
 				for range 16 {
-					wg.Go(func() { checkInfo(oldEntry, int64(len("old!"))) })
+					wg.Go(func() { checkLazySnapshotInfo(t, fail, denied, oldEntry, int64(len("old!"))) })
 				}
 				wg.Wait()
 				if got := calls.Load(); got != 1 {
 					t.Fatalf("concurrent Info invoked hook %d times, want one", got)
 				}
 				secondEntry := findHookTestEntry(t, second, "stored")
-				checkInfo(secondEntry, int64(len("old!")))
-				checkInfo(secondEntry, int64(len("old!")))
+				checkLazySnapshotInfo(t, fail, denied, secondEntry, int64(len("old!")))
+				checkLazySnapshotInfo(t, fail, denied, secondEntry, int64(len("old!")))
 				if got := calls.Load(); got != 2 {
 					t.Fatalf("two independent lists invoked hook %d times, want two", got)
 				}
@@ -273,7 +187,7 @@ func TestFastReadDirIndependentLazySnapshots(t *testing.T) {
 				if calls.Load() != 2 {
 					t.Fatal("fresh directory listing eagerly resolved metadata")
 				}
-				checkInfo(freshEntry, int64(len("replacement!")))
+				checkLazySnapshotInfo(t, fail, denied, freshEntry, int64(len("replacement!")))
 				if got := calls.Load(); got != 3 {
 					t.Fatalf("fresh entry reused another list's metadata cache: %d calls", got)
 				}
@@ -297,18 +211,12 @@ func TestFastPathHooksCanWriteFilesystem(t *testing.T) {
 					}
 					return append(content, '!'), err
 				}))
-				if err := root.MkdirAll("assets/deep", 0o750); err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, root.MkdirAll("assets/deep", 0o750))
 				mustWrite(t, root, "assets/deep/file", "old")
 				assets, err := root.Sub("assets")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				view, err := fs.Sub(assets, "deep")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				if fallback {
 					view = openOnlyFS{view}
 				}
@@ -332,9 +240,7 @@ func TestFastPathHooksCanWriteFilesystem(t *testing.T) {
 				}()
 				select {
 				case err := <-done:
-					if err != nil {
-						t.Fatal(err)
-					}
+					mustNoError(t, err)
 				case <-time.After(3 * time.Second):
 					t.Fatal("metadata hook blocked while writing to the filesystem")
 				}
@@ -342,9 +248,7 @@ func TestFastPathHooksCanWriteFilesystem(t *testing.T) {
 					t.Fatalf("hook path=%q, calls=%d", hookPath, calls.Load())
 				}
 				entries, err := fs.ReadDir(root, ".")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				findHookTestEntry(t, entries, "side-effect")
 			})
 		}
@@ -375,4 +279,100 @@ func TestEqualHookOutputRetainsSnapshotIsolation(t *testing.T) {
 			}
 		})
 	}
+}
+func checkFastPathOperation(t *testing.T, hooked bool, name, operation, prefix string, view fs.FS, denied error, calls *[]hookCall, original *error) {
+	t.Helper()
+	wantCalls := 0
+	if hooked && fs.ValidPath(name) && name != "." && name != "dir" && name != "empty" && name != "stored/child" {
+		wantCalls = 1
+	}
+	gotInfo, gotEntries, gotErr, gotCalls := runFastPathOperation(t, view, hooked, name, operation, prefix, wantCalls, calls, original)
+	wantInfo, wantEntries, wantErr, wantCallsLog := runFastPathOperation(t, openOnlyFS{view}, hooked, name, operation, prefix, wantCalls, calls, original)
+	compareFastPathError(t, gotErr, wantErr, denied)
+	if !reflect.DeepEqual(gotCalls, wantCallsLog) {
+		t.Fatalf("hook arguments differ: got=%v, want=%v", gotCalls, wantCallsLog)
+	}
+	if gotErr != nil {
+		return
+	}
+	if operation == "Stat" {
+		compareFastPathInfo(t, gotInfo, wantInfo)
+		return
+	}
+	checkFastDirectoryEntries(t, gotEntries, wantEntries, denied, calls)
+
+}
+
+func checkFastDirectoryEntries(t *testing.T, gotEntries, wantEntries []fs.DirEntry, denied error, calls *[]hookCall) {
+	t.Helper()
+	if gotEntries == nil || wantEntries == nil || len(gotEntries) != len(wantEntries) {
+		t.Fatalf("directory result differs: got=%v, want=%v", gotEntries, wantEntries)
+	}
+	for i, entry := range gotEntries {
+		other := wantEntries[i]
+		if entry.Name() != other.Name() || entry.IsDir() != other.IsDir() || entry.Type() != other.Type() {
+			t.Fatalf("entry %d differs: got=%v, want=%v", i, entry, other)
+		}
+		if i > 0 && gotEntries[i-1].Name() >= entry.Name() {
+			t.Fatalf("directory is not sorted: %v", gotEntries)
+		}
+		*calls = nil
+		gotInfo, gotErr := entry.Info()
+		gotCalls := append([]hookCall(nil), *calls...)
+		*calls = nil
+		wantInfo, wantErr := other.Info()
+		compareFastPathError(t, gotErr, wantErr, denied)
+		if !reflect.DeepEqual(gotCalls, *calls) {
+			t.Fatalf("entry hook arguments differ: got=%v, want=%v", gotCalls, *calls)
+		}
+		if gotErr == nil {
+			compareFastPathInfo(t, gotInfo, wantInfo)
+		}
+	}
+}
+
+func runFastPathOperation(t *testing.T, fsys fs.FS, hooked bool, name, operation, prefix string, wantCalls int, calls *[]hookCall, original *error) (fs.FileInfo, []fs.DirEntry, error, []hookCall) {
+	t.Helper()
+
+	*calls, *original = nil, nil
+	var info fs.FileInfo
+	var entries []fs.DirEntry
+	var err error
+	if operation == "Stat" {
+		info, err = fs.Stat(fsys, name)
+	} else {
+		entries, err = fs.ReadDir(fsys, name)
+	}
+	if hooked && name == "missing" && err != *original {
+		t.Fatalf("pass-through hook replaced original missing error: got=%v, original=%v", err, *original)
+	}
+	if len(*calls) != wantCalls {
+		t.Fatalf("hook calls=%v, want %d", *calls, wantCalls)
+	}
+	if wantCalls != 0 && (*calls)[0].name != path.Join(prefix, name) {
+		t.Fatalf("hook path=%q, want %q", (*calls)[0].name, path.Join(prefix, name))
+	}
+	return info, entries, err, append([]hookCall(nil), *calls...)
+
+}
+
+func checkLazySnapshotInfo(t *testing.T, fail bool, denied error, entry fs.DirEntry, size int64) {
+	t.Helper()
+
+	info, err := entry.Info()
+	if fail {
+		if !errors.Is(err, denied) {
+			t.Errorf("metadata error=%v, want %v", err, denied)
+		}
+		return
+	}
+	if err != nil || info.Size() != size || info.Mode() != 0o640 || !info.ModTime().IsZero() {
+		t.Errorf("snapshot metadata=%v, error=%v, want size=%d/mode=0640/zero timestamp", info, err, size)
+	}
+
+}
+
+type hookCall struct {
+	name, content string
+	missing       bool
 }

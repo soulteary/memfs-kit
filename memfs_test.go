@@ -38,9 +38,7 @@ func TestMemFS(t *testing.T) {
 	rootFS := New()
 
 	err := rootFS.MkdirAll("foo/bar", 0o777)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	var gotPaths []string
 
@@ -51,9 +49,7 @@ func TestMemFS(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	expectPaths := []string{
 		".",
@@ -77,28 +73,20 @@ func TestMemFS(t *testing.T) {
 
 	body := []byte("baz")
 	err = rootFS.WriteFile("foo/bar/baz.txt", body, 0o777)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	gotBody, err := fs.ReadFile(rootFS, "foo/bar/baz.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	if diff := testDiff(body, gotBody); diff != "" {
 		t.Fatalf("write/read baz.txt mismatch %s", diff)
 	}
 
 	subFS, err := rootFS.Sub("foo/bar")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	gotSubBody, err := fs.ReadFile(subFS, "baz.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	if diff := testDiff(body, gotSubBody); diff != "" {
 		t.Fatalf("write/read baz.txt mismatch %s", diff)
@@ -123,7 +111,7 @@ func TestMemFS(t *testing.T) {
 func TestOpenHook(t *testing.T) {
 	openHook := func(path string, content []byte, origError error) ([]byte, error) {
 		if path == "foo/bar/override" {
-			return []byte("overriden content"), nil
+			return []byte("overridden content"), nil
 		}
 
 		return content, origError
@@ -132,30 +120,20 @@ func TestOpenHook(t *testing.T) {
 	rootFS := New(WithOpenHook(openHook))
 
 	err := rootFS.MkdirAll("foo/bar", 0o777)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
-	if err := rootFS.WriteFile("foo/bar/f1", []byte("f1"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := rootFS.WriteFile("foo/bar/override", []byte("orig content"), 0o777); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, rootFS.WriteFile("foo/bar/f1", []byte("f1"), 0o777))
+	requireNoError(t, rootFS.WriteFile("foo/bar/override", []byte("orig content"), 0o777))
 
 	content, err := fs.ReadFile(rootFS, "foo/bar/f1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if diff := testDiff(string(content), "f1"); diff != "" {
 		t.Fatalf("write/read roo/bar/f1 mismatch %s", diff)
 	}
 
 	content, err = fs.ReadFile(rootFS, "foo/bar/override")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := testDiff(string(content), "overriden content"); diff != "" {
+	requireNoError(t, err)
+	if diff := testDiff(string(content), "overridden content"); diff != "" {
 		t.Fatalf("hook read mismatch %s", diff)
 	}
 
@@ -236,4 +214,10 @@ func testDiff(want, got any) string {
 		return ""
 	}
 	return fmt.Sprintf("want: %#v; got: %#v", want, got)
+}
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
