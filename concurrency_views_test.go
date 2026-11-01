@@ -19,17 +19,11 @@ import (
 // the hook metadata/lifetime fixes; it covers a gap in the original race suite.
 func TestConcurrentParentAndSubtreeWrites(t *testing.T) {
 	root := memfs.New()
-	if err := root.MkdirAll("data", 0o750); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, root.MkdirAll("data", 0o750))
 	view, err := root.Sub("data")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	sub := view.(*memfs.FS)
-	if err := sub.WriteFile("shared", bytes.Repeat([]byte("a"), 64), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, sub.WriteFile("shared", bytes.Repeat([]byte("a"), 64), 0o640))
 	views := []struct {
 		fsys *memfs.FS
 		name string
@@ -62,10 +56,7 @@ func TestConcurrentParentAndSubtreeWrites(t *testing.T) {
 					t.Errorf("read across views: stat=%v, read=%v", statErr, readErr)
 					return
 				}
-				if len(got) < 64 || len(got) > 127 || got[0] < 'a' || got[0] > 'h' ||
-					!bytes.Equal(got, bytes.Repeat(got[:1], len(got))) ||
-					info.Size() != int64(len(got)) || info.Mode().Perm() != 0o640 {
-					t.Errorf("inconsistent cross-view snapshot: data=%q, info=%v", got, info)
+				if !validCrossViewSnapshot(t, got, info) {
 					return
 				}
 			}
@@ -74,9 +65,7 @@ func TestConcurrentParentAndSubtreeWrites(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	if err := sub.WriteFile("shared", []byte("visible from parent"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, sub.WriteFile("shared", []byte("visible from parent"), 0o600))
 	got, err := fs.ReadFile(root, "data/shared")
 	if err != nil || string(got) != "visible from parent" {
 		t.Fatalf("parent did not observe subtree write: data=%q, err=%v", got, err)
@@ -89,14 +78,10 @@ func TestConcurrentDirectoryReadAndClose(t *testing.T) {
 	root := memfs.New()
 	for i := 0; i < 128; i++ {
 		name := fmt.Sprintf("file-%03d", i)
-		if err := root.WriteFile(name, []byte(name), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		mustNoError(t, root.WriteFile(name, []byte(name), 0o600))
 	}
 	f, err := root.Open(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	dir := f.(fs.ReadDirFile)
 	var wg sync.WaitGroup
 	var firstReads sync.WaitGroup
@@ -107,16 +92,8 @@ func TestConcurrentDirectoryReadAndClose(t *testing.T) {
 	checkEntries := func(entries []fs.DirEntry) {
 		seenMu.Lock()
 		defer seenMu.Unlock()
-		for _, entry := range entries {
-			if seen[entry.Name()] {
-				t.Errorf("directory returned duplicate entry %q", entry.Name())
-			}
-			seen[entry.Name()] = true
-			info, err := entry.Info()
-			if err != nil || info.Size() != int64(len(entry.Name())) {
-				t.Errorf("entry metadata changed while closing: info=%v, err=%v", info, err)
-			}
-		}
+		checkConcurrentDirectoryEntries(t, entries, seen)
+
 	}
 	for worker := 0; worker < 4; worker++ {
 		wg.Add(1)
@@ -160,5 +137,30 @@ func TestConcurrentDirectoryReadAndClose(t *testing.T) {
 	wg.Wait()
 	if _, err := dir.ReadDir(1); !errors.Is(err, fs.ErrClosed) {
 		t.Fatalf("closed directory read = %v", err)
+	}
+}
+
+func validCrossViewSnapshot(t *testing.T, got []byte, info fs.FileInfo) bool {
+	t.Helper()
+	if len(got) < 64 || len(got) > 127 || got[0] < 'a' || got[0] > 'h' ||
+		!bytes.Equal(got, bytes.Repeat(got[:1], len(got))) ||
+		info.Size() != int64(len(got)) || info.Mode().Perm() != 0o640 {
+		t.Errorf("inconsistent cross-view snapshot: data=%q, info=%v", got, info)
+		return false
+	}
+	return true
+}
+
+func checkConcurrentDirectoryEntries(t *testing.T, entries []fs.DirEntry, seen map[string]bool) {
+	t.Helper()
+	for _, entry := range entries {
+		if seen[entry.Name()] {
+			t.Errorf("directory returned duplicate entry %q", entry.Name())
+		}
+		seen[entry.Name()] = true
+		info, err := entry.Info()
+		if err != nil || info.Size() != int64(len(entry.Name())) {
+			t.Errorf("entry metadata changed while closing: info=%v, err=%v", info, err)
+		}
 	}
 }

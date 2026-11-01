@@ -105,31 +105,13 @@ func TestDirectoryPaginationSnapshot(t *testing.T) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		mustNoError(t, err)
 	}
 	if want := []string{"a", "b", "c", "d", "e"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("paginated entries = %v, want %v", got, want)
 	}
-	if entries, err := dir.ReadDir(1); len(entries) != 0 || !errors.Is(err, io.EOF) {
-		t.Fatalf("exhausted ReadDir(1) = %v, %v", entries, err)
-	}
-	if entries, err := dir.ReadDir(-1); len(entries) != 0 || err != nil {
-		t.Fatalf("exhausted ReadDir(-1) = %v, %v", entries, err)
-	}
-	if err := dir.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dir.ReadDir(1); !errors.Is(err, fs.ErrClosed) {
-		t.Fatalf("ReadDir after Close = %v", err)
-	}
-	if _, err := dir.Stat(); !errors.Is(err, fs.ErrClosed) {
-		t.Fatalf("directory Stat after Close = %v", err)
-	}
-	if _, err := dir.Read(make([]byte, 1)); !errors.Is(err, fs.ErrClosed) {
-		t.Fatalf("directory Read after Close = %v", err)
-	}
+	checkExhaustedAndClosedDirectory(t, dir)
+
 }
 
 func TestMkdirAllConflictReleasesLocks(t *testing.T) {
@@ -202,34 +184,15 @@ func TestSeekReadAtAndClosedFile(t *testing.T) {
 	if !ok {
 		t.Fatal("file does not implement io.ReaderAt")
 	}
-	if pos, err := seeker.Seek(-3, io.SeekEnd); pos != 7 || err != nil {
-		t.Fatalf("SeekEnd(-3) = %d, %v", pos, err)
-	}
+	checkReadAtCursor(t, seeker, readerAt)
 	buf := make([]byte, 4)
-	if n, err := readerAt.ReadAt(buf, 8); n != 2 || !errors.Is(err, io.EOF) || string(buf[:n]) != "89" {
-		t.Fatalf("ReadAt near EOF = %d, %q, %v", n, buf[:n], err)
-	}
-	if pos, err := seeker.Seek(0, io.SeekCurrent); pos != 7 || err != nil {
-		t.Fatalf("ReadAt moved cursor to %d: %v", pos, err)
-	}
-	if _, err := seeker.Seek(-1, io.SeekStart); err == nil {
-		t.Fatal("negative seek succeeded")
-	}
-	if _, err := seeker.Seek(0, 99); err == nil {
-		t.Fatal("invalid seek whence succeeded")
-	}
-	if pos, err := seeker.Seek(0, io.SeekCurrent); pos != 7 || err != nil {
-		t.Fatalf("invalid Seek changed cursor to %d: %v", pos, err)
-	}
 	if pos, err := seeker.Seek(100, io.SeekStart); pos != 100 || err != nil {
 		t.Fatalf("seek beyond EOF = %d, %v", pos, err)
 	}
 	if n, err := f.Read(buf); n != 0 || !errors.Is(err, io.EOF) {
 		t.Fatalf("Read beyond EOF = %d, %v", n, err)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, f.Close())
 	checks := map[string]func() error{
 		"Read":   func() error { _, err := f.Read(buf); return err },
 		"ReadAt": func() error { _, err := readerAt.ReadAt(buf, 0); return err },
@@ -364,9 +327,7 @@ func TestOpenHookMissingFilesAndErrors(t *testing.T) {
 			return content, origErr
 		}
 	}))
-	if err := fsys.MkdirAll("directory", 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, fsys.MkdirAll("directory", 0o755))
 	mustWrite(t, fsys, "file", "content")
 	got, err := fs.ReadFile(fsys, "virtual")
 	if err != nil || string(got) != "generated" {
@@ -382,23 +343,7 @@ func TestOpenHookMissingFilesAndErrors(t *testing.T) {
 	if _, err := fsys.Open("denied"); !errors.Is(err, denied) {
 		t.Fatalf("hook lost callback error: %v", err)
 	}
-	for _, name := range []string{"../invalid", "file/child"} {
-		if _, err := fsys.Open(name); !errors.Is(err, fs.ErrInvalid) {
-			t.Fatalf("Open(%q) = %v, want ErrInvalid", name, err)
-		}
-	}
-	_ = mustOpen(t, fsys, "directory")
-	entries, err := fs.ReadDir(fsys, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	if want := []string{"directory", "file"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("hook persisted virtual files: %v", names)
-	}
+	checkVirtualFilesNotPersisted(t, fsys)
 	if want := []string{"virtual", "empty", "missing", "denied"}; !reflect.DeepEqual(called, want) {
 		t.Fatalf("hook called for directory or invalid path: %v", called)
 	}
@@ -549,4 +494,74 @@ func TestConcurrentFileHandleOperations(t *testing.T) {
 	}()
 	close(start)
 	wg.Wait()
+}
+func mustNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func checkReadAtCursor(t *testing.T, seeker io.Seeker, readerAt io.ReaderAt) {
+	t.Helper()
+	if pos, err := seeker.Seek(-3, io.SeekEnd); pos != 7 || err != nil {
+		t.Fatalf("SeekEnd(-3) = %d, %v", pos, err)
+	}
+	buf := make([]byte, 4)
+	if n, err := readerAt.ReadAt(buf, 8); n != 2 || !errors.Is(err, io.EOF) || string(buf[:n]) != "89" {
+		t.Fatalf("ReadAt near EOF = %d, %q, %v", n, buf[:n], err)
+	}
+	if pos, err := seeker.Seek(0, io.SeekCurrent); pos != 7 || err != nil {
+		t.Fatalf("ReadAt moved cursor to %d: %v", pos, err)
+	}
+	if _, err := seeker.Seek(-1, io.SeekStart); err == nil {
+		t.Fatal("negative seek succeeded")
+	}
+	if _, err := seeker.Seek(0, 99); err == nil {
+		t.Fatal("invalid seek whence succeeded")
+	}
+	if pos, err := seeker.Seek(0, io.SeekCurrent); pos != 7 || err != nil {
+		t.Fatalf("invalid Seek changed cursor to %d: %v", pos, err)
+	}
+
+}
+
+func checkExhaustedAndClosedDirectory(t *testing.T, dir fs.ReadDirFile) {
+	t.Helper()
+	if entries, err := dir.ReadDir(1); len(entries) != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("exhausted ReadDir(1) = %v, %v", entries, err)
+	}
+	if entries, err := dir.ReadDir(-1); len(entries) != 0 || err != nil {
+		t.Fatalf("exhausted ReadDir(-1) = %v, %v", entries, err)
+	}
+	mustNoError(t, dir.Close())
+	if _, err := dir.ReadDir(1); !errors.Is(err, fs.ErrClosed) {
+		t.Fatalf("ReadDir after Close = %v", err)
+	}
+	if _, err := dir.Stat(); !errors.Is(err, fs.ErrClosed) {
+		t.Fatalf("directory Stat after Close = %v", err)
+	}
+	if _, err := dir.Read(make([]byte, 1)); !errors.Is(err, fs.ErrClosed) {
+		t.Fatalf("directory Read after Close = %v", err)
+	}
+}
+
+func checkVirtualFilesNotPersisted(t *testing.T, fsys *memfs.FS) {
+	t.Helper()
+	for _, name := range []string{"../invalid", "file/child"} {
+		if _, err := fsys.Open(name); !errors.Is(err, fs.ErrInvalid) {
+			t.Fatalf("Open(%q) = %v, want ErrInvalid", name, err)
+		}
+	}
+	_ = mustOpen(t, fsys, "directory")
+	entries, err := fs.ReadDir(fsys, ".")
+	mustNoError(t, err)
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if want := []string{"directory", "file"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("hook persisted virtual files: %v", names)
+	}
+
 }

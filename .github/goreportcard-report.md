@@ -1,11 +1,11 @@
 # Go Report Card
 
-**Grade: A+** (94.1%)
+**Grade: A+** (100.0%)
 
 | Metric | Value |
 | ------ | ----- |
 | Files | 14 |
-| Issues | 7 |
+| Issues | 0 |
 
 ## Checks
 
@@ -13,41 +13,12 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 50% |
+| gocyclo | 100% |
 | ineffassign | 100% |
 | license | 100% |
-| misspell | 92% |
+| misspell | 100% |
 
-## Issues
-
-### gocyclo
-
-- `read_info_test.go`
-  - Line 95: cyclomatic complexity 32 for function TestConcurrentSmallReadsConsumeEachByteOnce
-  - Line 184: cyclomatic complexity 29 for function TestDirectoryEntryMetadataSnapshots
-- `regression_test.go`
-  - Line 193: cyclomatic complexity 21 for function TestSeekReadAtAndClosedFile
-  - Line 344: cyclomatic complexity 20 for function TestOpenHookMissingFilesAndErrors
-  - Line 81: cyclomatic complexity 19 for function TestDirectoryPaginationSnapshot
-- `concurrency_views_test.go`
-  - Line 20: cyclomatic complexity 20 for function TestConcurrentParentAndSubtreeWrites
-  - Line 88: cyclomatic complexity 19 for function TestConcurrentDirectoryReadAndClose
-- `memfs_test.go`
-  - Line 37: cyclomatic complexity 16 for function TestMemFS
-- `hook_errors_test.go`
-  - Line 15: cyclomatic complexity 16 for function TestPassthroughHookPreservesOriginalError
-- `fuzz_test.go`
-  - Line 16: cyclomatic complexity 16 for function FuzzPathValidation
-- `fastpaths_test.go`
-  - Line 73: cyclomatic complexity 44 for function TestFastPathsMatchOpenFallback
-  - Line 201: cyclomatic complexity 22 for function TestFastReadDirIndependentLazySnapshots
-  - Line 285: cyclomatic complexity 19 for function TestFastPathHooksCanWriteFilesystem
-
-### misspell
-
-- `memfs_test.go`
-  - Line 126: "overriden" is a misspelling of "overridden"
-  - Line 158: "overriden" is a misspelling of "overridden"
+No issues found. Nice work!
 
 ---
 

@@ -98,9 +98,7 @@ func TestConcurrentSmallReadsConsumeEachByteOnce(t *testing.T) {
 	for i := range data {
 		data[i] = byte(i)
 	}
-	if err := root.WriteFile("file", data, 0o640); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, root.WriteFile("file", data, 0o640))
 	file := mustOpen(t, root, "file")
 	seeker, readerAt := file.(io.Seeker), file.(io.ReaderAt)
 	closed := make(chan struct{})
@@ -110,19 +108,7 @@ func TestConcurrentSmallReadsConsumeEachByteOnce(t *testing.T) {
 		observers.Go(func() {
 			first := true
 			for {
-				pos, seekErr := seeker.Seek(0, io.SeekCurrent)
-				if seekErr == nil && (pos < 0 || pos > int64(len(data))) || seekErr != nil && !errors.Is(seekErr, fs.ErrClosed) {
-					t.Errorf("concurrent cursor query=(%d,%v)", pos, seekErr)
-				}
-				var buffer [1]byte
-				n, readErr := readerAt.ReadAt(buffer[:], 77)
-				if readErr == nil && (n != 1 || buffer[0] != 77) || readErr != nil && !errors.Is(readErr, fs.ErrClosed) {
-					t.Errorf("concurrent ReadAt=(%d,%v,%v)", n, buffer, readErr)
-				}
-				info, statErr := file.Stat()
-				if statErr == nil && info.Size() != int64(len(data)) || statErr != nil && !errors.Is(statErr, fs.ErrClosed) {
-					t.Errorf("concurrent Stat=(%v,%v)", info, statErr)
-				}
+				checkConcurrentReadMetadata(t, file, seeker, readerAt, len(data))
 				if first {
 					ready.Done()
 					first = false
@@ -143,24 +129,7 @@ func TestConcurrentSmallReadsConsumeEachByteOnce(t *testing.T) {
 	var readers sync.WaitGroup
 	for range 8 {
 		readers.Go(func() {
-			var buffer [1]byte
-			for attempt := 0; attempt <= len(data); attempt++ {
-				n, err := file.Read(buffer[:])
-				if n == 1 {
-					readBytes <- buffer[0]
-				}
-				if err != nil {
-					if !errors.Is(err, io.EOF) {
-						t.Errorf("small Read=%v", err)
-					}
-					return
-				}
-				if n != 1 {
-					t.Errorf("small Read made no progress: %d", n)
-					return
-				}
-			}
-			t.Error("small reads did not reach EOF after more reads than file bytes")
+			consumeSmallReads(t, file, len(data), readBytes)
 		})
 	}
 	readers.Wait()
@@ -193,23 +162,15 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 				}))
 			}
 			root := memfs.New(options...)
-			if err := root.MkdirAll("dir", 0o750); err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, root.MkdirAll("dir", 0o750))
 			mustWrite(t, root, "file", "old")
 			beforeFile, err := fs.Stat(root, "file")
-			if err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, err)
 			beforeDir, err := fs.Stat(root, "dir")
-			if err != nil {
-				t.Fatal(err)
-			}
+			mustNoError(t, err)
 			heldFile, heldDir := func() (fs.FileInfo, fs.FileInfo) {
 				entries, err := fs.ReadDir(root, ".")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				calls.Store(0)
 				oldFile, oldDir := findHookTestEntry(t, entries, "file"), findHookTestEntry(t, entries, "dir")
 				mustWrite(t, root, "file", "replacement is longer")
@@ -224,9 +185,7 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 				}
 				mustWrite(t, root, "dir/new-child", "changes the directory timestamp")
 				currentDir, err := fs.Stat(root, "dir")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				if currentDir.ModTime().Equal(beforeDir.ModTime()) {
 					t.Fatal("creating a directory child did not change its modification time")
 				}
@@ -236,9 +195,7 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 						want  fs.FileInfo
 					}{{oldFile, beforeFile}, {oldDir, beforeDir}} {
 						info, err := pair.entry.Info()
-						if err != nil {
-							t.Fatal(err)
-						}
+						mustNoError(t, err)
 						compareFastPathInfo(t, info, pair.want)
 					}
 				}
@@ -250,24 +207,16 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 					t.Fatalf("repeated file/directory Info invoked hooks %d times, want %d", got, wantCalls)
 				}
 				fresh, err := fs.ReadDir(root, ".")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				freshDir, err := findHookTestEntry(t, fresh, "dir").Info()
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				compareFastPathInfo(t, freshDir, currentDir)
 				// Holding just FileInfo must keep its immutable metadata usable even
 				// after entry slices are discarded and the current tree changes again.
 				heldFile, err := oldFile.Info()
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				heldDir, err := oldDir.Info()
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				return heldFile, heldDir
 			}()
 			mustWrite(t, root, "file", "another replacement")
@@ -280,10 +229,7 @@ func TestDirectoryEntryMetadataSnapshots(t *testing.T) {
 						for _, pair := range []struct {
 							info, want fs.FileInfo
 						}{{heldFile, beforeFile}, {heldDir, beforeDir}} {
-							if pair.info.Name() != pair.want.Name() || pair.info.Size() != pair.want.Size() ||
-								pair.info.Mode() != pair.want.Mode() || !pair.info.ModTime().Equal(pair.want.ModTime()) ||
-								pair.info.IsDir() != pair.want.IsDir() || pair.info.Sys() != nil {
-								t.Errorf("retained metadata changed: got=%v, want=%v", pair.info, pair.want)
+							if !checkRetainedInfo(t, pair.info, pair.want) {
 								return
 							}
 						}
@@ -347,4 +293,55 @@ func TestHookInfoPanicIsCached(t *testing.T) {
 		t.Fatalf("another listing reused the first panic cache: recovered=%v, calls=%d", recovered, calls.Load())
 	}
 	mustWrite(t, root, "after-panic", "filesystem remains writable")
+}
+func consumeSmallReads(t *testing.T, file fs.File, size int, readBytes chan<- byte) {
+	t.Helper()
+
+	var buffer [1]byte
+	for attempt := 0; attempt <= size; attempt++ {
+		n, err := file.Read(buffer[:])
+		if n == 1 {
+			readBytes <- buffer[0]
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				t.Errorf("small Read=%v", err)
+			}
+			return
+		}
+		if n != 1 {
+			t.Errorf("small Read made no progress: %d", n)
+			return
+		}
+	}
+	t.Error("small reads did not reach EOF after more reads than file bytes")
+}
+
+func checkConcurrentReadMetadata(t *testing.T, file fs.File, seeker io.Seeker, readerAt io.ReaderAt, size int) {
+	t.Helper()
+	pos, seekErr := seeker.Seek(0, io.SeekCurrent)
+	if seekErr == nil && (pos < 0 || pos > int64(size)) || seekErr != nil && !errors.Is(seekErr, fs.ErrClosed) {
+		t.Errorf("concurrent cursor query=(%d,%v)", pos, seekErr)
+	}
+	var buffer [1]byte
+	n, readErr := readerAt.ReadAt(buffer[:], 77)
+	if readErr == nil && (n != 1 || buffer[0] != 77) || readErr != nil && !errors.Is(readErr, fs.ErrClosed) {
+		t.Errorf("concurrent ReadAt=(%d,%v,%v)", n, buffer, readErr)
+	}
+	info, statErr := file.Stat()
+	if statErr == nil && info.Size() != int64(size) || statErr != nil && !errors.Is(statErr, fs.ErrClosed) {
+		t.Errorf("concurrent Stat=(%v,%v)", info, statErr)
+	}
+
+}
+
+func checkRetainedInfo(t *testing.T, info, want fs.FileInfo) bool {
+	t.Helper()
+	if info.Name() != want.Name() || info.Size() != want.Size() ||
+		info.Mode() != want.Mode() || !info.ModTime().Equal(want.ModTime()) ||
+		info.IsDir() != want.IsDir() || info.Sys() != nil {
+		t.Errorf("retained metadata changed: got=%v, want=%v", info, want)
+		return false
+	}
+	return true
 }

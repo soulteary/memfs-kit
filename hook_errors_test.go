@@ -28,14 +28,10 @@ func TestPassthroughHookPreservesOriginalError(t *testing.T) {
 			var view fs.FS = root
 			wantHookPath := "missing.txt"
 			if subtree {
-				if err := root.MkdirAll("assets", 0o755); err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, root.MkdirAll("assets", 0o755))
 				var err error
 				view, err = root.Sub("assets")
-				if err != nil {
-					t.Fatal(err)
-				}
+				mustNoError(t, err)
 				wantHookPath = "assets/missing.txt"
 			}
 			_, err := view.Open("missing.txt")
