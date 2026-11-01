@@ -1,7 +1,7 @@
 # Go report policy
 
 The report integration follows [health-kit's CI at commit `4c8be735`](https://github.com/soulteary/health-kit/blob/4c8be735ad9da47b2a46c3458071911578f51fb2/.github/workflows/ci.yml),
-using **Go Test Report v1.1.2** and **Go Report Card v1.1.3**, with their Actions
+using **Go Test Report v1.1.3** and **Go Report Card v1.1.4**, with their Actions
 pinned to the corresponding release commits. Reports are produced by the normal
 CI workflow so successful changes to `main` update the README badges.
 
@@ -12,8 +12,8 @@ CI workflow so successful changes to `main` update the README badges.
   badge. Coverage reporting reuses that run's profile without repeating tests.
   Toolchain auto-selection is allowed while the Action bootstraps its CLI; it
   then selects the project's `go.mod` before running tests.
-  The CLI is built from the pinned v1.1.2 source because that release's binary
-  installer fails in its cleanup trap after downloading successfully.
+  The CLI is built from the pinned v1.1.3 source, retaining the source-install
+  path originally introduced for the v1.1.2 binary installer's cleanup-trap failure.
 - The existing formatting, module consistency, `go vet`, Linux/macOS/Windows
   tests, and bounded path fuzzing remain enabled. Fuzzing runs before Go Report
   Card, using the project's selected Go toolchain.
