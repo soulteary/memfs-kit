@@ -14,6 +14,11 @@
 `http.FileServer(http.FS(root))`。文件系统拥有独立的数据副本，支持并发操作，
 每次打开文件都会获得独立、支持定位读取的快照。运行和测试均不依赖第三方 Go 库。
 
+## v1.1.2
+
+本补丁版将所需的 Go 版本提高到 1.27.4，API 与行为相对 v1.1.1 不变。详见
+[v1.1.2 发布说明](.github/releases/v1.1.2.md)。
+
 ## v1.1.1
 
 本补丁版继续优化小块读取和目录条目元数据：
@@ -34,10 +39,10 @@
 
 ## 环境与安装
 
-需要 **Go 1.27.3 或更新版本**。
+需要 **Go 1.27.4 或更新版本**。
 
 ```sh
-go get github.com/soulteary/memfs-kit@v1.1.1
+go get github.com/soulteary/memfs-kit@v1.1.2
 ```
 
 模块路径是 `github.com/soulteary/memfs-kit`，Go 包名保留为 `memfs`。

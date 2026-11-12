@@ -15,6 +15,11 @@ templates and `http.FileServer(http.FS(root))`. The filesystem owns its data,
 supports concurrent operations, and returns independent, seekable file
 snapshots. There are no dependencies outside the Go standard library.
 
+## v1.1.2
+
+This patch raises the required Go version to 1.27.4. The API and behavior are
+unchanged from v1.1.1. See the [v1.1.2 release notes](.github/releases/v1.1.2.md).
+
 ## v1.1.1
 
 This patch reduces small-read and directory-entry metadata overhead:
@@ -37,10 +42,10 @@ improvements are recorded in the [v1.1.0 release notes](.github/releases/v1.1.0.
 
 ## Requirements and installation
 
-Go **1.27.3 or newer**.
+Go **1.27.4 or newer**.
 
 ```sh
-go get github.com/soulteary/memfs-kit@v1.1.1
+go get github.com/soulteary/memfs-kit@v1.1.2
 ```
 
 The module is `github.com/soulteary/memfs-kit`; the Go package name is `memfs`.
