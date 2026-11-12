@@ -37,7 +37,7 @@ improvements are recorded in the [v1.1.0 release notes](.github/releases/v1.1.0.
 
 ## Requirements and installation
 
-Go **1.27.3 or newer**.
+Go **1.27.4 or newer**.
 
 ```sh
 go get github.com/soulteary/memfs-kit@v1.1.1

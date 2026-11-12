@@ -34,7 +34,7 @@
 
 ## 环境与安装
 
-需要 **Go 1.27.3 或更新版本**。
+需要 **Go 1.27.4 或更新版本**。
 
 ```sh
 go get github.com/soulteary/memfs-kit@v1.1.1
